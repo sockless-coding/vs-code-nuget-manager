@@ -26,7 +26,7 @@ update / uninstall.
 
 ## Usage
 
-Open the manager from the command palette (**NuGet: Manage Packages**), the
+Open the manager from the command palette (**Manage NuGet Packages…**), the
 editor-title icon on a `.csproj`, or the explorer context menu on a project file.
 
 ## Settings
@@ -47,7 +47,7 @@ npm run test:unit  # version sorting, nuget.config parsing, csproj edits
 ```
 
 Press <kbd>F5</kbd> to launch the Extension Development Host against
-`sample-workspace/`, then run **NuGet: Manage Packages**.
+`sample-workspace/`, then run **Manage NuGet Packages…**.
 
 ### Building the VSIX
 

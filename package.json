@@ -33,7 +33,7 @@
     "commands": [
       {
         "command": "nuget.openManager",
-        "title": "Manage Packages",
+        "title": "Manage NuGet Packages...",
         "category": "NuGet",
         "icon": "$(package)"
       },
