@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "sourceMap": true,
+    "rootDir": ".",
+    "outDir": "out-tests",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "src/nuget/NuGetVersion.ts",
+    "src/nuget/nugetConfig.ts",
+    "src/projects/xmlEdit.ts",
+    "test/unit/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

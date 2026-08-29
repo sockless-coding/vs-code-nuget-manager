@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out-tests/
+*.vsix
+.vscode-test/
+
+# .NET build output (from sample-workspace)
+[Bb]in/
+[Oo]bj/
+
+# codicons copied in by esbuild.mjs
+media/codicon.css
+media/codicon.ttf
+

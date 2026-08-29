@@ -1,0 +1,133 @@
+{
+  "name": "vs-code-nuget-manager",
+  "displayName": "Sockless NuGet Package Manager",
+  "description": "Visual NuGet package manager for VS Code — browse, install, update and consolidate packages with a Visual Studio-like experience.",
+  "version": "0.1.0",
+  "publisher": "sockless-coding",
+  "license": "MIT",
+  "author": "Jimmy Everling",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sockless-coding/vs-code-nuget-manager.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "nuget",
+    "dotnet",
+    "csproj",
+    "package manager",
+    "c#"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.csproj",
+    "workspaceContains:**/*.fsproj",
+    "workspaceContains:**/*.vbproj"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "nuget.openManager",
+        "title": "Manage Packages",
+        "category": "NuGet",
+        "icon": "$(package)"
+      },
+      {
+        "command": "nuget.refresh",
+        "title": "Refresh",
+        "category": "NuGet",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "nuget.refresh",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "nuget.openManager",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "nuget.openManager",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj || resourceFilename == packages.config",
+          "group": "7_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "NuGet Package Manager",
+      "properties": {
+        "nuget.defaultIncludePrerelease": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include prerelease packages in search results by default."
+        },
+        "nuget.additionalSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          },
+          "default": [],
+          "description": "Additional NuGet feeds to query, merged with any discovered nuget.config sources."
+        },
+        "nuget.dotnetPath": {
+          "type": "string",
+          "default": "dotnet",
+          "description": "Path to the dotnet executable. Leave as 'dotnet' to use the one on PATH."
+        },
+        "nuget.autoRestore": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run 'dotnet restore' automatically after installing, updating or removing packages."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "node esbuild.mjs --production",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "test:unit": "npm run compile-tests && node --test \"out-tests/test/unit/*.test.js\"",
+    "lint": "eslint src --ext ts,tsx",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "vsix": "vsce package --no-dependencies",
+    "vsix:prerelease": "vsce package --no-dependencies --pre-release"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.23.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.5.3"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.36",
+    "fast-xml-parser": "^4.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
