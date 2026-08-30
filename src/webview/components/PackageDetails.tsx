@@ -7,6 +7,7 @@ import type {
 } from "../../panel/messaging";
 import { formatDate, formatDownloads, severityLabel } from "../format";
 import { ageInDays, formatRelativeAge, pickDefaultVersion } from "../packageAge";
+import { isExactVersionPin, stripVersionPin } from "../../nuget/versionRange";
 import { request } from "../vscodeApi";
 
 interface Props {
@@ -44,7 +45,22 @@ export function PackageDetails({
   );
 
   const visibleVersions = detail.versions.filter((v) => includePrerelease || !v.isPrerelease);
-  const defaultVersion = pickDefaultVersion(detail.versions, includePrerelease, minPackageAgeDays);
+  // For an installed package, default the version picker to the version it is
+  // currently at (so "Pin" locks the current version and "Update" is an explicit
+  // choice); otherwise use the supply-chain-aware default for a fresh install.
+  const installedVersion = installedForPackage
+    ? stripVersionPin(
+        installedForPackage.pinnedVersion ||
+          installedForPackage.projectVersions[0]?.version ||
+          installedForPackage.requestedVersion ||
+          installedForPackage.resolvedVersion ||
+          ""
+      )
+    : "";
+  const defaultVersion =
+    installedVersion && detail.versions.some((v) => v.version === installedVersion)
+      ? installedVersion
+      : pickDefaultVersion(detail.versions, includePrerelease, minPackageAgeDays);
   const [version, setVersion] = React.useState(defaultVersion);
   React.useEffect(
     () => setVersion(defaultVersion),
@@ -94,22 +110,32 @@ export function PackageDetails({
     });
   };
 
+  const projectPinned = (path: string): boolean =>
+    !!installedForPackage?.projectVersions.find((pv) => pv.project === path)?.pinned;
+
   const chosen = [...selectedProjects];
   const anyChosen = chosen.length > 0;
   const chosenInstalled = chosen.filter((p) => installedProjectPaths.has(p));
   const chosenNotInstalled = chosen.filter((p) => !installedProjectPaths.has(p));
+  const chosenPinned = chosenInstalled.filter(projectPinned);
+  const chosenUnpinned = chosenInstalled.filter((p) => !projectPinned(p));
 
   const canInstall = anyChosen && chosenNotInstalled.length > 0;
   const canUpdate =
     anyChosen &&
     chosenInstalled.length > 0 &&
     chosenInstalled.some((path) => {
-      const current =
+      const current = stripVersionPin(
         installedForPackage?.projectVersions.find((pv) => pv.project === path)?.version ??
-        installedForPackage?.requestedVersion;
+          installedForPackage?.requestedVersion ??
+          ""
+      );
       return current !== version;
     });
   const canUninstall = anyChosen && chosenInstalled.length > 0;
+  const canPin = anyChosen && chosenUnpinned.length > 0;
+  const canUnpin = anyChosen && chosenPinned.length > 0;
+  const pinnedAndVulnerable = !!installedForPackage?.pinned && !!installedForPackage?.hasVulnerability;
 
   return (
     <div className="pkg-detail">
@@ -174,6 +200,22 @@ export function PackageDetails({
           </ul>
         </div>
       )}
+      {pinnedAndVulnerable && (
+        <div className="callout callout-error">
+          <strong>Pinned &amp; vulnerable.</strong> This package is pinned to{" "}
+          <code>{installedForPackage?.pinnedVersion ?? "an exact version"}</code>, so it is held back
+          from <em>Update All</em> — but the pinned version has a known advisory. Choose a fixed
+          version above and <em>Update</em> (it stays pinned), or <em>Unpin</em> to let it float.
+        </div>
+      )}
+      {!pinnedAndVulnerable && installedForPackage?.pinned && (
+        <div className="callout callout-warn">
+          <strong>Pinned.</strong> Referenced as{" "}
+          <code>[{installedForPackage.pinnedVersion ?? "exact"}]</code> and held back from{" "}
+          <em>Update All</em>. <em>Unpin</em> to allow updates; vulnerability checks still apply
+          either way.
+        </div>
+      )}
       {selectedBelowMinAge && (
         <div className="callout callout-warn">
           <strong>Freshly released.</strong> Version {version} was published{" "}
@@ -208,6 +250,24 @@ export function PackageDetails({
           <button disabled={busy || !canUpdate} onClick={() => onMutate("update", version, chosenInstalled)}>
             Update
           </button>
+          {canUnpin && (
+            <button
+              disabled={busy}
+              title={`Remove the exact-version lock on ${chosenPinned.length} project(s)`}
+              onClick={() => onMutate("unpin", version, chosenPinned)}
+            >
+              Unpin
+            </button>
+          )}
+          {(!canUnpin || canPin) && (
+            <button
+              disabled={busy || !canPin}
+              title={`Lock ${chosenUnpinned.length} project(s) to version ${version} ([${version}])`}
+              onClick={() => onMutate("pin", version, chosenUnpinned)}
+            >
+              Pin
+            </button>
+          )}
           <button
             className="danger"
             disabled={busy || !canUninstall}
@@ -235,9 +295,11 @@ export function PackageDetails({
         </div>
         {projects.length === 0 && <div className="empty">No projects found in this workspace.</div>}
         {projects.map((p) => {
-          const inst =
+          const rawInst =
             installedForPackage?.projectVersions.find((pv) => pv.project === p.path)?.version ??
             (installedProjectPaths.has(p.path) ? installedForPackage?.requestedVersion ?? "—" : "—");
+          const inst = rawInst === "—" ? "—" : stripVersionPin(rawInst);
+          const pinned = isExactVersionPin(rawInst) || projectPinned(p.path);
           const vulnerable = vulnerableProjectPaths.has(p.path);
           return (
             <label key={p.path} className={"project-row" + (vulnerable ? " vulnerable" : "")}>
@@ -257,7 +319,12 @@ export function PackageDetails({
                 )}
                 {p.usesCentralPackageManagement && <span className="chip" title="Central Package Management">CPM</span>}
               </span>
-              <span className={inst === "—" ? "muted" : ""}>{inst}</span>
+              <span className={"project-installed" + (inst === "—" ? " muted" : "")}>
+                {inst}
+                {pinned && inst !== "—" && (
+                  <span className="codicon codicon-pinned pin-mark" title="Pinned to this exact version" />
+                )}
+              </span>
             </label>
           );
         })}

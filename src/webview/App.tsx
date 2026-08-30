@@ -185,8 +185,9 @@ export function App() {
   };
 
   const updateAll = async () => {
-    const doUpdate = updates.filter((p) => p.latestVersion && !p.latestBelowMinAge);
-    const heldBack = updates.filter((p) => p.latestBelowMinAge).length;
+    const doUpdate = updates.filter((p) => p.latestVersion && !p.latestBelowMinAge && !p.pinned);
+    const heldBack = updates.filter((p) => p.latestBelowMinAge && !p.pinned).length;
+    const heldBackPinned = updates.filter((p) => p.pinned).length;
     setBusy(true);
     let done = 0;
     for (const pkg of doUpdate) {
@@ -206,11 +207,13 @@ export function App() {
       }
     }
     setBusy(false);
+    const notes = [
+      heldBack > 0 ? `${heldBack} newer than the ${minPackageAgeDays}-day minimum age` : "",
+      heldBackPinned > 0 ? `${heldBackPinned} pinned` : ""
+    ].filter(Boolean);
     setToast(
       `Updated ${done} package${done === 1 ? "" : "s"}` +
-        (heldBack > 0
-          ? ` — ${heldBack} held back (newer than the ${minPackageAgeDays}-day minimum age)`
-          : "")
+        (notes.length > 0 ? ` — held back: ${notes.join(", ")}` : "")
     );
     await refreshInstalled();
     await refreshUpdates();
@@ -359,7 +362,18 @@ export function App() {
 }
 
 function labelFor(action: InstallAction): string {
-  return action === "install" ? "Installed" : action === "update" ? "Updated" : "Uninstalled";
+  switch (action) {
+    case "install":
+      return "Installed";
+    case "update":
+      return "Updated";
+    case "uninstall":
+      return "Uninstalled";
+    case "pin":
+      return "Pinned";
+    case "unpin":
+      return "Unpinned";
+  }
 }
 
 function emptyMessageFor(tab: Tab, query: string): string {

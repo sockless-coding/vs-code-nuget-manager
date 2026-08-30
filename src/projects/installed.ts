@@ -19,6 +19,7 @@ import { ProjectRegistry, WorkspaceProject } from "./discovery";
 import { FeedRegistry } from "../nuget/feeds";
 import { MetadataService } from "../nuget/metadata";
 import { maxVersion } from "../nuget/NuGetVersion";
+import { isExactVersionPin, stripVersionPin } from "../nuget/versionRange";
 import { Advisory, DependencyGraph, mergeGraphs, readAssetsGraph } from "./assetsGraph";
 import { mapWithConcurrency } from "../util";
 
@@ -64,6 +65,7 @@ export class InstalledService {
     }
 
     this.applyGraph(merged);
+    this.markPinned(merged);
     await this.applyIcons(merged.values());
 
     return { packages: [...merged.values()].sort((a, b) => a.id.localeCompare(b.id)), sdkAvailable };
@@ -80,8 +82,9 @@ export class InstalledService {
         const out = await this.dotnet.listPackages(target, ["--outdated"]);
         if (out) this.foldDotnetOutput(out, merged, false);
       }
+      this.markPinned(merged);
       updates = [...merged.values()]
-        .filter((p) => p.latestVersion && p.latestVersion !== p.requestedVersion)
+        .filter((p) => p.latestVersion && p.latestVersion !== stripVersionPin(p.requestedVersion))
         .sort((a, b) => a.id.localeCompare(b.id));
       await this.applyIcons(updates);
     } else {
@@ -93,7 +96,7 @@ export class InstalledService {
         })
       );
       updates = base.packages
-        .filter((p) => p.latestVersion && p.latestVersion !== p.requestedVersion)
+        .filter((p) => p.latestVersion && p.latestVersion !== stripVersionPin(p.requestedVersion))
         .sort((a, b) => a.id.localeCompare(b.id));
     }
 
@@ -249,6 +252,36 @@ export class InstalledService {
           this.markVulnerableProject(entry, projectPath);
           if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
         }
+      }
+    }
+  }
+
+  /**
+   * Flag exact-version pins (`[x.y.z]`). The per-project pin state is read from
+   * the parsed project / props model rather than the CLI output so it is reliable
+   * regardless of whether `dotnet list` preserved the bracket syntax.
+   */
+  private markPinned(merged: Map<string, InstalledPackage>): void {
+    for (const project of this.projects.getProjects()) {
+      for (const ref of project.parsed.packageReferences) {
+        const key = ref.id.toLowerCase();
+        const entry = merged.get(key);
+        if (!entry) continue;
+        let raw = ref.versionOverride || ref.version;
+        if (!raw && project.info.usesCentralPackageManagement) {
+          raw = project.cpm.versions.get(key)?.version ?? "";
+        }
+        const pv = entry.projectVersions.find((p) => p.project === project.info.path);
+        if (pv) pv.pinned = isExactVersionPin(raw);
+      }
+    }
+
+    for (const entry of merged.values()) {
+      const direct = entry.projectVersions;
+      entry.pinned = direct.length > 0 && direct.every((pv) => pv.pinned);
+      if (entry.pinned) {
+        const versions = new Set(direct.map((pv) => stripVersionPin(pv.version)));
+        entry.pinnedVersion = versions.size === 1 ? [...versions][0] : undefined;
       }
     }
   }

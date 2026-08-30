@@ -48,6 +48,14 @@ test("converts child-element version to bare reference for CPM", () => {
   assert.doesNotMatch(out, /<Version>/);
 });
 
+test("pins and unpins an inline version (exact-version syntax)", () => {
+  const pinned = upsertPackageReference(classic, "Newtonsoft.Json", "[13.0.1]");
+  assert.match(pinned, /Newtonsoft\.Json" Version="\[13\.0\.1\]"/);
+  const unpinned = upsertPackageReference(pinned, "Newtonsoft.Json", "13.0.1");
+  assert.match(unpinned, /Newtonsoft\.Json" Version="13\.0\.1"/);
+  assert.doesNotMatch(unpinned, /\[13\.0\.1\]/);
+});
+
 test("preserves CRLF line endings", () => {
   const crlf = classic.replace(/\n/g, "\r\n");
   const out = upsertPackageReference(crlf, "Serilog", "3.1.1");

@@ -30,6 +30,11 @@ versions out of your projects.
 - **Stay safe from supply-chain attacks.** Versions published in the last few
   days are held back from *Update All* and the default selection, so a
   compromised release can't slip in during its highest-risk window.
+- **Pin versions you don't want moving.** *Pin* writes NuGet exact-version
+  syntax (`[1.2.3]`) into the project — or `Directory.Packages.props` under CPM —
+  so `dotnet restore` can't float it and *Update All* leaves it alone. Pinning
+  never hides a vulnerability: a pinned package with an advisory is still flagged,
+  loudly.
 - **Central Package Management, handled.** CPM is detected automatically —
   versions go to `Directory.Packages.props`, projects keep bare
   `<PackageReference>` entries.
@@ -59,9 +64,20 @@ of your direct packages brought a transitive dependency along.
 
 Every package with a newer version available, with **Update All** for the whole
 workspace. Freshly published versions are called out and excluded from the bulk
-update until they've had time to prove themselves.
+update until they've had time to prove themselves, and pinned packages are left
+untouched — the toast tells you what was held back and why.
 
 ![The Updates tab with a freshly-released version flagged as a supply-chain risk](https://raw.githubusercontent.com/sockless-coding/vs-code-nuget-manager/main/docs/images/updates.png)
+
+### Pin a version
+
+Select the projects and hit **Pin** to lock the package at its current version
+using NuGet's exact-version range (`[1.2.3]`). Pinned packages show a **pinned**
+badge, are skipped by **Update All**, and are not offered as the default upgrade
+target — updating one manually keeps the pin on the new version. **Unpin** removes
+the lock. Vulnerability and deprecation checks run on pinned packages exactly as
+on any other, and a pinned package with a known advisory gets a prominent
+"pinned & vulnerable" callout.
 
 ### Consolidate — one version everywhere
 

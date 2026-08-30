@@ -14,6 +14,7 @@ import { MutationRequest, MutationResult } from "../panel/messaging";
 import { DotnetCli } from "../dotnet/cli";
 import { ProjectRegistry, WorkspaceProject } from "./discovery";
 import { projectDisplayName } from "./installed";
+import { isExactVersionPin, stripVersionPin, toExactVersionPin } from "../nuget/versionRange";
 import {
   removePackageReference,
   removePackageVersion,
@@ -47,7 +48,22 @@ export class MutationService {
         continue;
       }
       try {
-        if (sdk) {
+        // Pin / unpin — and updating an already-pinned reference — is a
+        // format-preserving text edit that just rewrites the version string
+        // (`1.2.3` <-> `[1.2.3]`); `dotnet add package` would drop the brackets.
+        const pinMode =
+          req.action === "pin"
+            ? "pin"
+            : req.action === "unpin"
+            ? "unpin"
+            : req.action === "update" && this.isPinned(project, req.packageId)
+            ? "pin"
+            : undefined;
+
+        if (pinMode) {
+          this.applyPin(req, project, pinMode);
+          if (!sdk) result.restoreNeeded = true;
+        } else if (sdk) {
           await this.applyWithCli(req, project, sourceUrl);
         } else {
           this.applyWithXml(req, project);
@@ -77,6 +93,33 @@ export class MutationService {
     }
     const r = await this.dotnet.addPackage(project.info.path, req.packageId, req.version, sourceUrl);
     if (r.code !== 0) throw new Error(lastLine(r.stderr || r.stdout) || "dotnet add failed");
+  }
+
+  /** Is `packageId` currently referenced with exact-version syntax in this project? */
+  private isPinned(project: WorkspaceProject, packageId: string): boolean {
+    const key = packageId.toLowerCase();
+    const ref = project.parsed.packageReferences.find((r) => r.id.toLowerCase() === key);
+    let raw = ref?.versionOverride || ref?.version;
+    if (!raw && project.info.usesCentralPackageManagement) {
+      raw = project.cpm.versions.get(key)?.version ?? "";
+    }
+    return isExactVersionPin(raw);
+  }
+
+  /** Write the version as `[x.y.z]` (pin) or `x.y.z` (unpin), preserving file formatting. */
+  private applyPin(req: MutationRequest, project: WorkspaceProject, mode: "pin" | "unpin"): void {
+    if (!req.version) throw new Error("A target version is required");
+    const version = mode === "pin" ? toExactVersionPin(req.version) : stripVersionPin(req.version);
+    const useCpm = project.info.usesCentralPackageManagement && !!project.cpm.propsPath;
+    this.output.appendLine(
+      `[xml] ${mode} ${req.packageId}@${version} in ${project.info.name}${useCpm ? " (CPM)" : ""}`
+    );
+    if (useCpm) {
+      editFile(project.cpm.propsPath!, (t) => upsertPackageVersion(t, req.packageId, version));
+      editFile(project.info.path, (t) => upsertPackageReference(t, req.packageId, undefined));
+    } else {
+      editFile(project.info.path, (t) => upsertPackageReference(t, req.packageId, version));
+    }
   }
 
   private applyWithXml(req: MutationRequest, project: WorkspaceProject): void {

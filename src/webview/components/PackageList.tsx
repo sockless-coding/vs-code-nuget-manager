@@ -3,7 +3,7 @@ import type { InstalledPackage, PackageSummary } from "../../panel/messaging";
 import { formatDownloads } from "../format";
 import { ageInDays } from "../packageAge";
 
-export type RowBadge = "deprecated" | "vulnerable" | "new";
+export type RowBadge = "deprecated" | "vulnerable" | "new" | "pinned";
 
 export interface ListRow {
   id: string;
@@ -45,14 +45,18 @@ export function summaryToRow(p: PackageSummary, minAgeDays = 0): ListRow {
 }
 
 export function installedToRow(p: InstalledPackage): ListRow {
+  const current = p.pinnedVersion || p.requestedVersion || p.resolvedVersion || "?";
   const right =
-    p.latestVersion && p.latestVersion !== p.requestedVersion
-      ? `${p.requestedVersion || p.resolvedVersion || "?"} → ${p.latestVersion}`
-      : p.requestedVersion || p.resolvedVersion || "";
+    p.latestVersion && p.latestVersion !== (p.pinnedVersion || p.requestedVersion)
+      ? `${current} → ${p.latestVersion}`
+      : current === "?"
+      ? ""
+      : current;
 
   const badges: RowBadge[] = [];
   if (p.hasVulnerability) badges.push("vulnerable");
   if (p.deprecated) badges.push("deprecated");
+  if (p.pinned) badges.push("pinned");
   if (p.latestBelowMinAge) badges.push("new");
 
   return {
@@ -228,6 +232,11 @@ export function PackageList({
                 </span>
               )}
               {row.badges.includes("deprecated") && <span className="badge badge-warn">deprecated</span>}
+              {row.badges.includes("pinned") && (
+                <span className="badge badge-pinned" title="Version is pinned — held back from Update All">
+                  <span className="codicon codicon-pinned" /> pinned
+                </span>
+              )}
               {row.badges.includes("new") && (
                 <span className="badge badge-new" title="Published within the minimum package age">
                   just released

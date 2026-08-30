@@ -78,7 +78,7 @@ export interface InstalledPackage {
   /** Project paths that reference this package directly. */
   projects: string[];
   /** Direct reference version per project — basis for the Consolidate view. */
-  projectVersions: { project: string; version: string }[];
+  projectVersions: { project: string; version: string; pinned?: boolean }[];
   /** True when only present transitively (no direct PackageReference). */
   transitive: boolean;
   latestVersion?: string;
@@ -101,6 +101,13 @@ export interface InstalledPackage {
   latestPublished?: string;
   /** True when `latestVersion` is newer than the configured minimum package age. */
   latestBelowMinAge?: boolean;
+  /**
+   * True when every direct reference is an exact-version pin (`[x.y.z]`). Pinned
+   * packages are held back from "Update All"; vulnerability checks still apply.
+   */
+  pinned?: boolean;
+  /** The pinned version (without brackets) when all direct references pin the same one. */
+  pinnedVersion?: string;
 }
 
 export interface FeedInfo {
@@ -110,7 +117,7 @@ export interface FeedInfo {
   requiresAuth: boolean;
 }
 
-export type InstallAction = "install" | "update" | "uninstall";
+export type InstallAction = "install" | "update" | "uninstall" | "pin" | "unpin";
 
 export interface MutationRequest {
   action: InstallAction;

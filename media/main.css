@@ -329,6 +329,31 @@ button:disabled {
   border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
 }
 
+.badge-pinned {
+  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.14));
+  color: var(--vscode-descriptionForeground, #b0b0b0);
+  border: 1px solid var(--border);
+  text-transform: none;
+}
+
+.badge-pinned .codicon {
+  font-size: 1em;
+  vertical-align: -1px;
+}
+
+.project-installed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pin-mark {
+  font-size: 0.95em;
+  color: var(--vscode-descriptionForeground, #b0b0b0);
+}
+
 .empty,
 .loading {
   padding: 24px var(--pad);
