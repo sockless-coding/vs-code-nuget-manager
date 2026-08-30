@@ -1,0 +1,40 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Source art for media/icon.png. Dark / copper theme.
+       Re-render: open in a browser at 512x512 and screenshot, then downscale to 128. -->
+  <defs>
+    <radialGradient id="bg" cx="38%" cy="32%" r="85%">
+      <stop offset="0%" stop-color="#33302e"/>
+      <stop offset="55%" stop-color="#232120"/>
+      <stop offset="100%" stop-color="#161514"/>
+    </radialGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f0ad63"/>
+      <stop offset="100%" stop-color="#d68b3f"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b06a30"/>
+      <stop offset="100%" stop-color="#8a4f22"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8f5326"/>
+      <stop offset="100%" stop-color="#6d3d1a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="128" height="128" rx="20" fill="url(#bg)"/>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="18.5" fill="none" stroke="#e59a4d" stroke-opacity="0.25" stroke-width="1.5"/>
+
+  <g transform="translate(64,65)">
+    <ellipse cx="0" cy="34" rx="42" ry="9" fill="#000" opacity="0.38"/>
+
+    <path d="M0,-40 L40,-18 L0,4 L-40,-18 Z" fill="url(#top)"/>
+    <path d="M-40,-18 L0,4 L0,44 L-40,22 Z" fill="url(#left)"/>
+    <path d="M40,-18 L0,4 L0,44 L40,22 Z" fill="url(#right)"/>
+
+    <path d="M-25.25,-26.11 L-14.75,-31.89 L25.25,-9.89 L14.75,-4.11 Z" fill="#ffdca6" opacity="0.32"/>
+    <path d="M14.75,-4.11 L25.25,-9.89 L25.25,30.11 L14.75,35.89 Z" fill="#2f1e0f" opacity="0.30"/>
+
+    <path d="M0,-40 L40,-18 L0,4 L-40,-18 Z" fill="none" stroke="#ffd9a8" stroke-opacity="0.55" stroke-width="1.2"/>
+    <path d="M-40,-18 L0,4 L40,-18" fill="none" stroke="#5a3417" stroke-opacity="0.45" stroke-width="1.1"/>
+  </g>
+</svg>

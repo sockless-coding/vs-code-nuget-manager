@@ -1,5 +1,7 @@
 .vscode/**
 .github/**
+docs/**
+media/icon.svg
 src/**
 test/**
 sample-workspace/**

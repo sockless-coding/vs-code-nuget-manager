@@ -6,6 +6,11 @@
   "publisher": "sockless-coding",
   "license": "MIT",
   "author": "Jimmy Everling",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#232120",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/sockless-coding/vs-code-nuget-manager.git"
@@ -67,7 +72,7 @@
       ]
     },
     "configuration": {
-      "title": "NuGet Package Manager",
+      "title": "Sockless NuGet Package Manager",
       "properties": {
         "nuget.defaultIncludePrerelease": {
           "type": "boolean",
