@@ -95,6 +95,12 @@
           "type": "boolean",
           "default": true,
           "description": "Run 'dotnet restore' automatically after installing, updating or removing packages."
+        },
+        "nuget.minimumPackageAgeDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 0,
+          "description": "Minimum age in days before a newly published package version is trusted. Newer versions are flagged as a potential supply-chain risk and held back from 'Update All' and the default version selection. Set to 0 to disable the check."
         }
       }
     }

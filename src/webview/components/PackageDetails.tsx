@@ -6,6 +6,7 @@ import type {
   ProjectInfo
 } from "../../panel/messaging";
 import { formatDate, formatDownloads, severityLabel } from "../format";
+import { ageInDays, formatRelativeAge, pickDefaultVersion } from "../packageAge";
 import { request } from "../vscodeApi";
 
 interface Props {
@@ -13,17 +14,43 @@ interface Props {
   projects: ProjectInfo[];
   installed: InstalledPackage[];
   includePrerelease: boolean;
+  minPackageAgeDays: number;
   busy: boolean;
   onMutate: (action: InstallAction, version: string, projectPaths: string[]) => void;
+  onSelectPackage: (id: string) => void;
 }
 
-export function PackageDetails({ detail, projects, installed, includePrerelease, busy, onMutate }: Props) {
+export function PackageDetails({
+  detail,
+  projects,
+  installed,
+  includePrerelease,
+  minPackageAgeDays,
+  busy,
+  onMutate,
+  onSelectPackage
+}: Props) {
   const installedForPackage = installed.find((p) => p.id.toLowerCase() === detail.id.toLowerCase());
   const installedProjectPaths = new Set(installedForPackage?.projects ?? []);
+  const vulnerableProjectPaths = new Set(
+    installedForPackage?.vulnerableProjects?.length
+      ? installedForPackage.vulnerableProjects
+      : installedForPackage?.hasVulnerability
+      ? installedForPackage.projects
+      : []
+  );
 
   const visibleVersions = detail.versions.filter((v) => includePrerelease || !v.isPrerelease);
-  const [version, setVersion] = React.useState(detail.selectedVersion);
-  React.useEffect(() => setVersion(detail.selectedVersion), [detail.id, detail.selectedVersion]);
+  const defaultVersion = pickDefaultVersion(detail.versions, includePrerelease, minPackageAgeDays);
+  const [version, setVersion] = React.useState(defaultVersion);
+  React.useEffect(
+    () => setVersion(defaultVersion),
+    [detail.id, defaultVersion]
+  );
+
+  const selectedInfo = detail.versions.find((v) => v.version === version);
+  const selectedAgeDays = ageInDays(selectedInfo?.published);
+  const selectedBelowMinAge = minPackageAgeDays > 0 && selectedAgeDays < minPackageAgeDays;
 
   const [selectedProjects, setSelectedProjects] = React.useState<Set<string>>(new Set());
   React.useEffect(() => {
@@ -99,18 +126,56 @@ export function PackageDetails({ detail, projects, installed, includePrerelease,
           </ul>
         </div>
       )}
+      {installedForPackage?.vulnerabilities && installedForPackage.vulnerabilities.length > 0 && (
+        <div className="callout callout-error">
+          <strong>
+            The installed{installedForPackage.transitive ? " (transitive)" : ""} version has advisories:
+          </strong>
+          <ul>
+            {installedForPackage.vulnerabilities.map((v, i) => (
+              <li key={i}>
+                {severityLabel(v.severity)}
+                {v.advisoryUrl && (
+                  <>
+                    {" — "}
+                    <a
+                      href="#"
+                      onClick={(e) => (e.preventDefault(), request({ kind: "openExternal", url: v.advisoryUrl }))}
+                    >
+                      advisory
+                    </a>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {selectedBelowMinAge && (
+        <div className="callout callout-warn">
+          <strong>Freshly released.</strong> Version {version} was published{" "}
+          {formatRelativeAge(selectedInfo?.published)} — within your {minPackageAgeDays}-day minimum
+          package age (<code>nuget.minimumPackageAgeDays</code>). New releases are the highest-risk
+          window for a compromised package; prefer an older version unless you have a reason to take
+          this one.
+        </div>
+      )}
 
       <div className="pkg-detail-controls">
         <label>
           Version
           <select value={version} onChange={(e) => setVersion(e.target.value)} disabled={busy}>
-            {visibleVersions.map((v) => (
-              <option key={v.version} value={v.version}>
-                {v.version}
-                {v.isPrerelease ? "  (prerelease)" : ""}
-                {v.published ? `  · ${formatDate(v.published)}` : ""}
-              </option>
-            ))}
+            {visibleVersions.map((v) => {
+              const tooNew = minPackageAgeDays > 0 && ageInDays(v.published) < minPackageAgeDays;
+              return (
+                <option key={v.version} value={v.version}>
+                  {v.version}
+                  {v.isPrerelease ? "  (prerelease)" : ""}
+                  {v.published ? `  · ${formatDate(v.published)}` : ""}
+                  {tooNew ? `  · released ${formatRelativeAge(v.published)}` : ""}
+                </option>
+              );
+            })}
           </select>
         </label>
         <div className="button-row">
@@ -140,8 +205,9 @@ export function PackageDetails({ detail, projects, installed, includePrerelease,
           const inst =
             installedForPackage?.projectVersions.find((pv) => pv.project === p.path)?.version ??
             (installedProjectPaths.has(p.path) ? installedForPackage?.requestedVersion ?? "—" : "—");
+          const vulnerable = vulnerableProjectPaths.has(p.path);
           return (
-            <label key={p.path} className="project-row">
+            <label key={p.path} className={"project-row" + (vulnerable ? " vulnerable" : "")}>
               <span>
                 <input
                   type="checkbox"
@@ -150,6 +216,12 @@ export function PackageDetails({ detail, projects, installed, includePrerelease,
                   disabled={busy}
                 />
                 {p.name}
+                {vulnerable && (
+                  <span
+                    className="codicon codicon-warning vuln-mark"
+                    title="This project resolves a vulnerable version of the package"
+                  />
+                )}
                 {p.usesCentralPackageManagement && <span className="chip" title="Central Package Management">CPM</span>}
               </span>
               <span className={inst === "—" ? "muted" : ""}>{inst}</span>
@@ -173,6 +245,21 @@ export function PackageDetails({ detail, projects, installed, includePrerelease,
         )}
         {!detail.licenseUrl && detail.licenseExpression && <span className="muted">License: {detail.licenseExpression}</span>}
       </div>
+
+      {installedForPackage?.requiredBy && installedForPackage.requiredBy.length > 0 && (
+        <details className="deps" open>
+          <summary>Referenced by (in your projects)</summary>
+          <ul className="referenced-by">
+            {installedForPackage.requiredBy.map((id) => (
+              <li key={id}>
+                <button className="link-button" onClick={() => onSelectPackage(id)}>
+                  {id}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {detail.dependencyGroups.length > 0 && (
         <details className="deps">

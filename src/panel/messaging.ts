@@ -19,6 +19,8 @@ export interface PackageSummary {
   tags?: string[];
   /** Source feed name this result came from. */
   source: string;
+  /** Publish date of `version`, when known — used to flag freshly released packages. */
+  latestPublished?: string;
 }
 
 export interface PackageDependency {
@@ -83,6 +85,22 @@ export interface InstalledPackage {
   latestStableVersion?: string;
   deprecated?: boolean;
   hasVulnerability?: boolean;
+  /** Package icon, resolved from the feed's flat container (best-effort). */
+  iconUrl?: string;
+  /** Known advisories affecting the installed version (direct or transitive). */
+  vulnerabilities?: { severity: number; advisoryUrl: string }[];
+  /** Highest advisory severity (0..3), or -1 when there are none. */
+  maxVulnerabilitySeverity?: number;
+  /** Project paths where the resolved version is flagged vulnerable. */
+  vulnerableProjects?: string[];
+  /** Package ids in the resolved graph that depend directly on this package. */
+  requiredBy?: string[];
+  /** Package ids this package depends on directly (resolved graph). */
+  dependsOn?: string[];
+  /** Publish date of `latestVersion`, when known. */
+  latestPublished?: string;
+  /** True when `latestVersion` is newer than the configured minimum package age. */
+  latestBelowMinAge?: boolean;
 }
 
 export interface FeedInfo {
@@ -143,6 +161,8 @@ export interface InitialState {
   defaultIncludePrerelease: boolean;
   feeds: FeedInfo[];
   projects: ProjectInfo[];
+  /** Minimum age in days before a package version is trusted; 0 disables the check. */
+  minimumPackageAgeDays: number;
 }
 
 export type HostResponse =
@@ -152,6 +172,7 @@ export type HostResponse =
 export type HostEvent =
   | { type: "event"; event: "projectsChanged" }
   | { type: "event"; event: "installedChanged" }
+  | { type: "event"; event: "settingsChanged" }
   | { type: "event"; event: "progress"; message: string; done: boolean };
 
 export type HostMessage = ({ type: "response" } & HostResponse) | HostEvent;

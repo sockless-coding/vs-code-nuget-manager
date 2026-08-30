@@ -13,9 +13,15 @@ update / uninstall.
 - **Version-correct** – versions are ordered with NuGet's own rules (four-part
   versions, prerelease precedence, `10.0.0` above `9.0.1`, `2.0.0` above
   `2.0.0-beta`), not naive string or SemVer comparison.
-- **Installed** – everything referenced in the workspace, with an *Include
-  transitive* toggle, deprecation and vulnerability badges.
+- **Installed** – everything referenced in the workspace, with package icons, an
+  *Include transitive* toggle that shows the resolved dependency **tree** (which
+  direct package pulls in each transitive one), and deprecation / vulnerability
+  badges. Vulnerable **transitive** packages are always flagged, even with the
+  toggle off.
 - **Updates** – packages with a newer version available, plus **Update All**.
+- **Supply-chain guardrail** – versions published within `nuget.minimumPackageAgeDays`
+  (default 7) are flagged and held back from *Update All* and the default version
+  selection; you can still pick them manually.
 - **Consolidate** – packages referenced at different versions across projects.
 - **Central Package Management** – detected automatically; versions are written to
   `Directory.Packages.props` and projects keep bare `<PackageReference>`.
@@ -37,6 +43,7 @@ editor-title icon on a `.csproj`, or the explorer context menu on a project file
 | `nuget.additionalSources` | `[]` | Extra `{ "name", "url" }` feeds to query. |
 | `nuget.dotnetPath` | `dotnet` | Path to the `dotnet` executable. |
 | `nuget.autoRestore` | `true` | Run `dotnet restore` after a change. |
+| `nuget.minimumPackageAgeDays` | `7` | Days a version must be public before it is trusted; newer versions are flagged and held back. `0` disables. |
 
 ## Development
 
@@ -90,6 +97,7 @@ Bump `version` in `package.json` before packaging a release.
 | Version parsing & ordering | [src/nuget/NuGetVersion.ts](src/nuget/NuGetVersion.ts) |
 | Feeds & credentials | [src/nuget/feeds.ts](src/nuget/feeds.ts), [src/nuget/nugetConfig.ts](src/nuget/nugetConfig.ts) |
 | Project discovery, installed/updates, mutations | [src/projects/](src/projects/) |
+| Resolved dependency graph & audit warnings (`project.assets.json`) | [src/projects/assetsGraph.ts](src/projects/assetsGraph.ts) |
 | `dotnet` CLI wrapper | [src/dotnet/cli.ts](src/dotnet/cli.ts) |
 | React UI | [src/webview/](src/webview/) |
 

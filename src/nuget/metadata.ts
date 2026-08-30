@@ -67,6 +67,27 @@ interface CatalogEntry {
 export class MetadataService {
   constructor(private readonly http: HttpClient, private readonly indexes: ServiceIndexCache) {}
 
+  /** Flat-container base URL for a feed, used to construct icon URLs. */
+  async flatContainerBase(feedIndexUrl: string): Promise<string | undefined> {
+    const resources = await this.indexes.resolve(feedIndexUrl);
+    return resources.packageBaseAddress;
+  }
+
+  /** Map of lower-cased version -> publish date (ISO) for a package. */
+  async publishedDates(
+    feedIndexUrl: string,
+    packageId: string,
+    signal?: AbortSignal
+  ): Promise<Map<string, string>> {
+    const resources = await this.indexes.resolve(feedIndexUrl);
+    const catalog = await this.loadCatalog(resources.registrationsBaseUrl, packageId, signal);
+    const dates = new Map<string, string>();
+    for (const [version, entry] of catalog) {
+      if (entry.published) dates.set(version, entry.published);
+    }
+    return dates;
+  }
+
   /** All published versions, newest-first. */
   async listVersions(feedIndexUrl: string, packageId: string, signal?: AbortSignal): Promise<string[]> {
     const resources = await this.indexes.resolve(feedIndexUrl);

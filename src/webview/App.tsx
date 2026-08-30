@@ -8,7 +8,7 @@ import type {
   ProjectInfo
 } from "../panel/messaging";
 import { onHostEvent, onProgress, request } from "./vscodeApi";
-import { PackageList, installedToRow, summaryToRow } from "./components/PackageList";
+import { PackageList, buildInstalledTree, installedToRow, summaryToRow } from "./components/PackageList";
 import { PackageDetails } from "./components/PackageDetails";
 
 type Tab = "browse" | "installed" | "updates" | "consolidate";
@@ -18,6 +18,7 @@ const PAGE_SIZE = 25;
 export function App() {
   const [tab, setTab] = React.useState<Tab>("browse");
   const [includePrerelease, setIncludePrerelease] = React.useState(false);
+  const [minPackageAgeDays, setMinPackageAgeDays] = React.useState(0);
   const [source, setSource] = React.useState(ALL_SOURCES);
   const [feeds, setFeeds] = React.useState<FeedInfo[]>([]);
   const [projects, setProjects] = React.useState<ProjectInfo[]>([]);
@@ -30,6 +31,8 @@ export function App() {
   const [installed, setInstalled] = React.useState<InstalledPackage[]>([]);
   const [updates, setUpdates] = React.useState<InstalledPackage[]>([]);
   const [includeTransitive, setIncludeTransitive] = React.useState(false);
+  const [installedLoading, setInstalledLoading] = React.useState(false);
+  const [updatesLoading, setUpdatesLoading] = React.useState(false);
   const [sdkAvailable, setSdkAvailable] = React.useState(true);
 
   const [selectedId, setSelectedId] = React.useState<string | undefined>();
@@ -43,17 +46,27 @@ export function App() {
   const searchSeq = React.useRef(0);
 
   /* ---------------------------- initial load ---------------------------- */
-  React.useEffect(() => {
+  const loadInitialState = React.useCallback(() => {
     request({ kind: "ready" }).then((r) => {
       setIncludePrerelease(r.initialState.defaultIncludePrerelease);
+      setMinPackageAgeDays(r.initialState.minimumPackageAgeDays);
       setFeeds(r.initialState.feeds);
       setProjects(r.initialState.projects);
     });
+  }, []);
+
+  React.useEffect(() => {
+    loadInitialState();
     const offEvent = onHostEvent((event) => {
       if (event === "projectsChanged") {
         request({ kind: "listProjects" }).then((r) => setProjects(r.projects));
       }
       if (event === "installedChanged") {
+        refreshInstalled();
+        refreshUpdates();
+      }
+      if (event === "settingsChanged") {
+        loadInitialState();
         refreshInstalled();
         refreshUpdates();
       }
@@ -98,14 +111,24 @@ export function App() {
 
   /* --------------------------- installed / updates --------------------- */
   const refreshInstalled = React.useCallback(async () => {
-    const r = await request({ kind: "listInstalled", includeTransitive });
-    setInstalled(r.packages);
-    setSdkAvailable(r.sdkAvailable);
+    setInstalledLoading(true);
+    try {
+      const r = await request({ kind: "listInstalled", includeTransitive });
+      setInstalled(r.packages);
+      setSdkAvailable(r.sdkAvailable);
+    } finally {
+      setInstalledLoading(false);
+    }
   }, [includeTransitive]);
 
   const refreshUpdates = React.useCallback(async () => {
-    const r = await request({ kind: "listUpdates" });
-    setUpdates(r.packages);
+    setUpdatesLoading(true);
+    try {
+      const r = await request({ kind: "listUpdates" });
+      setUpdates(r.packages);
+    } finally {
+      setUpdatesLoading(false);
+    }
   }, []);
 
   React.useEffect(() => {
@@ -158,40 +181,64 @@ export function App() {
   };
 
   const updateAll = async () => {
-    for (const pkg of updates) {
-      if (!pkg.latestVersion) continue;
-      setBusy(true);
+    const doUpdate = updates.filter((p) => p.latestVersion && !p.latestBelowMinAge);
+    const heldBack = updates.filter((p) => p.latestBelowMinAge).length;
+    setBusy(true);
+    let done = 0;
+    for (const pkg of doUpdate) {
       try {
         await request({
           kind: "mutate",
           request: {
             action: "update",
             packageId: pkg.id,
-            version: pkg.latestVersion,
+            version: pkg.latestVersion!,
             projectPaths: pkg.projects
           }
         });
+        done++;
       } catch {
         /* keep going */
       }
     }
     setBusy(false);
-    setToast("Updated all packages");
+    setToast(
+      `Updated ${done} package${done === 1 ? "" : "s"}` +
+        (heldBack > 0
+          ? ` — ${heldBack} held back (newer than the ${minPackageAgeDays}-day minimum age)`
+          : "")
+    );
     await refreshInstalled();
     await refreshUpdates();
   };
 
   /* --------------------------- derived rows --------------------------- */
   const consolidatable = React.useMemo(() => groupInconsistent(installed), [installed]);
+  const vulnerableCount = React.useMemo(
+    () => installed.filter((p) => p.hasVulnerability).length,
+    [installed]
+  );
+  const installedIsTree = tab === "installed" && includeTransitive;
 
   const rows =
     tab === "browse"
-      ? results.map(summaryToRow)
+      ? results.map((p) => summaryToRow(p, minPackageAgeDays))
       : tab === "installed"
-      ? installed.map(installedToRow)
+      ? installedIsTree
+        ? buildInstalledTree(installed)
+        : installed.map(installedToRow)
       : tab === "updates"
       ? updates.map(installedToRow)
       : consolidatable.map(installedToRow);
+
+  const listLoading =
+    tab === "browse"
+      ? searching
+      : tab === "updates"
+      ? updatesLoading
+      : tab === "installed" || tab === "consolidate"
+      ? installedLoading
+      : false;
 
   return (
     <div className="app">
@@ -227,16 +274,21 @@ export function App() {
       </header>
 
       <nav className="tabs">
-        <button className={tab === "browse" ? "active" : ""} onClick={() => setTab("browse")}>
+        <button className={"tab" + (tab === "browse" ? " active" : "")} onClick={() => setTab("browse")}>
           Browse
         </button>
-        <button className={tab === "installed" ? "active" : ""} onClick={() => setTab("installed")}>
+        <button className={"tab" + (tab === "installed" ? " active" : "")} onClick={() => setTab("installed")}>
           Installed <span className="count">{installed.length}</span>
+          {vulnerableCount > 0 && (
+            <span className="count vuln" title={`${vulnerableCount} package(s) with known vulnerabilities`}>
+              <span className="codicon codicon-warning" /> {vulnerableCount}
+            </span>
+          )}
         </button>
-        <button className={tab === "updates" ? "active" : ""} onClick={() => setTab("updates")}>
+        <button className={"tab" + (tab === "updates" ? " active" : "")} onClick={() => setTab("updates")}>
           Updates {updates.length > 0 && <span className="count accent">{updates.length}</span>}
         </button>
-        <button className={tab === "consolidate" ? "active" : ""} onClick={() => setTab("consolidate")}>
+        <button className={"tab" + (tab === "consolidate" ? " active" : "")} onClick={() => setTab("consolidate")}>
           Consolidate {consolidatable.length > 0 && <span className="count">{consolidatable.length}</span>}
         </button>
         <span className="spacer" />
@@ -265,7 +317,9 @@ export function App() {
           <PackageList
             rows={rows}
             selectedId={selectedId}
-            loading={tab === "browse" ? searching : false}
+            loading={listLoading}
+            loadingMessage={tab === "browse" ? "Searching…" : "Enumerating packages…"}
+            tree={installedIsTree}
             emptyMessage={emptyMessageFor(tab, query)}
             onSelect={setSelectedId}
             onLoadMore={() => runSearch(query, true)}
@@ -280,8 +334,10 @@ export function App() {
               projects={projects}
               installed={installed}
               includePrerelease={includePrerelease}
+              minPackageAgeDays={minPackageAgeDays}
               busy={busy}
               onMutate={onMutate}
+              onSelectPackage={setSelectedId}
             />
           )}
           {!detailLoading && !detail && <div className="empty">Select a package to see details.</div>}

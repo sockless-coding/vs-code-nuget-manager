@@ -19,7 +19,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 
 export const vscode = acquireVsCodeApi();
 
-type HostEventName = "projectsChanged" | "installedChanged";
+type HostEventName = "projectsChanged" | "installedChanged" | "settingsChanged";
 
 let nextId = 1;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();

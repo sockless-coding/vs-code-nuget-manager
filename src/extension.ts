@@ -4,12 +4,14 @@ import {
   FeedInfo,
   HostResponsePayload,
   InitialState,
+  PackageSummary,
   ProjectInfo,
   WebviewRequest
 } from "./panel/messaging";
 import { HttpClient, HttpError } from "./nuget/httpClient";
 import { ServiceIndexCache } from "./nuget/serviceIndex";
 import { SearchService, mergeSearchResults } from "./nuget/search";
+import { mapWithConcurrency } from "./util";
 import { MetadataService } from "./nuget/metadata";
 import { FeedRegistry } from "./nuget/feeds";
 import { DotnetCli } from "./dotnet/cli";
@@ -50,6 +52,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         feeds.refresh();
         http.clearCache();
         dotnet.invalidateAvailability();
+        NuGetPanel.instance?.sendEvent({ type: "event", event: "settingsChanged" });
       }
     })
   );
@@ -105,7 +108,7 @@ class Controller {
       }
 
       case "listUpdates":
-        return { kind: "listUpdates", packages: await this.installed.listUpdates() };
+        return { kind: "listUpdates", packages: await this.installed.listUpdates(this.minimumPackageAgeDays()) };
 
       case "mutate": {
         const feed = req.request.source ? this.feeds.findByName(req.request.source) : undefined;
@@ -129,8 +132,14 @@ class Controller {
         .getConfiguration("nuget")
         .get<boolean>("defaultIncludePrerelease", false),
       feeds: this.feedInfos(),
-      projects: this.projectInfos()
+      projects: this.projectInfos(),
+      minimumPackageAgeDays: this.minimumPackageAgeDays()
     };
+  }
+
+  private minimumPackageAgeDays(): number {
+    const raw = vscode.workspace.getConfiguration("nuget").get<number>("minimumPackageAgeDays", 7);
+    return Number.isFinite(raw) && raw > 0 ? raw : 0;
   }
 
   private feedInfos(): FeedInfo[] {
@@ -168,11 +177,32 @@ class Controller {
         ).catch(() => ({ results: [], hasMore: false }))
       )
     );
+    const results = mergeSearchResults(lists.map((l) => l.results));
+    // Best-effort supply-chain flag; never let it stall the result list.
+    await Promise.race([
+      this.enrichPublishDates(results),
+      new Promise((resolve) => setTimeout(resolve, 2500))
+    ]);
     return {
       kind: "search",
-      results: mergeSearchResults(lists.map((l) => l.results)),
+      results,
       hasMore: lists.some((l) => l.hasMore)
     };
+  }
+
+  /** Best-effort: attach the publish date of each result's latest version. */
+  private async enrichPublishDates(results: PackageSummary[]): Promise<void> {
+    await mapWithConcurrency(results, 8, async (r) => {
+      const feed = this.feeds.findByName(r.source) ?? this.feeds.getEnabledV3Feeds()[0];
+      if (!feed?.isV3) return;
+      try {
+        const dates = await this.metadata.publishedDates(feed.url, r.id);
+        const d = dates.get(r.version.toLowerCase());
+        if (d) r.latestPublished = d;
+      } catch {
+        /* ignore */
+      }
+    });
   }
 
   private async doDetail(req: Extract<WebviewRequest, { kind: "getPackageDetail" }>): Promise<HostResponsePayload> {

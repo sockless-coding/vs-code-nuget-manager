@@ -16,6 +16,8 @@
     "src/nuget/NuGetVersion.ts",
     "src/nuget/nugetConfig.ts",
     "src/projects/xmlEdit.ts",
+    "src/projects/assetsGraph.ts",
+    "src/webview/packageAge.ts",
     "test/unit/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
