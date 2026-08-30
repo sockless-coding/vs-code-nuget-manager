@@ -105,7 +105,7 @@
     "watch": "node esbuild.mjs --watch",
     "package": "node esbuild.mjs --production",
     "compile-tests": "tsc -p tsconfig.test.json",
-    "test:unit": "npm run compile-tests && node --test \"out-tests/test/unit/*.test.js\"",
+    "test:unit": "npm run compile-tests && cd out-tests && node --test",
     "lint": "eslint src --ext ts,tsx",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "vsix": "vsce package --no-dependencies",
