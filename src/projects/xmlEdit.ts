@@ -89,6 +89,74 @@ export function removePackageReference(text: string, id: string): string {
   return dropEmptyItemGroups(out);
 }
 
+/**
+ * Strip `Version` / `VersionOverride` (inline attributes or child elements) from
+ * an existing `<PackageReference Include="id" />`, leaving a bare reference for
+ * Central Package Management. No-op when the reference is absent or already bare.
+ */
+export function stripVersionAttributes(text: string, id: string): string {
+  const escaped = escapeRe(id);
+  const present = new RegExp(`<PackageReference\\s+[^>]*?\\bInclude\\s*=\\s*"${escaped}"`, "i");
+  if (!present.test(text)) return text;
+
+  // Collapse a child-element reference (<Version>/<VersionOverride>) to bare.
+  const childRe = new RegExp(
+    `(<PackageReference\\s+[^>]*?\\bInclude\\s*=\\s*"${escaped}"[^>]*?)>\\s*(?:<(?:Version|VersionOverride)>[^<]*</(?:Version|VersionOverride)>\\s*)+</PackageReference>`,
+    "i"
+  );
+  let out = text.replace(childRe, "$1 />");
+
+  // Drop inline Version / VersionOverride attributes.
+  const attrRe = new RegExp(`(<PackageReference\\s+[^>]*?\\bInclude\\s*=\\s*"${escaped}"[^>]*?)(\\s*/>)`, "i");
+  out = out.replace(attrRe, (_m, tag: string, close: string) => {
+    const cleaned = tag
+      .replace(/\s+Version\s*=\s*"[^"]*"/i, "")
+      .replace(/\s+VersionOverride\s*=\s*"[^"]*"/i, "");
+    return `${cleaned}${close}`;
+  });
+  return out;
+}
+
+/**
+ * Set (or insert) `<ManagePackageVersionsCentrally>` in the first `<PropertyGroup>`,
+ * creating a `<PropertyGroup>` after `<Project ...>` if there is none.
+ */
+export function setManagePackageVersionsCentrally(text: string, value: boolean): string {
+  const flag = new RegExp(
+    `(<ManagePackageVersionsCentrally>\\s*)(?:true|false)(\\s*</ManagePackageVersionsCentrally>)`,
+    "i"
+  );
+  if (flag.test(text)) {
+    return text.replace(flag, `$1${value}$2`);
+  }
+
+  const eol = detectEol(text);
+  const element = `<ManagePackageVersionsCentrally>${value}</ManagePackageVersionsCentrally>`;
+
+  const pg = text.match(/([ \t]*)<PropertyGroup\b[^>]*>/i);
+  if (pg && pg.index !== undefined) {
+    const at = pg.index + pg[0].length;
+    const indent = pg[1] + baseIndent(text);
+    return `${text.slice(0, at)}${eol}${indent}${element}${text.slice(at)}`;
+  }
+
+  const proj = text.match(/<Project\b[^>]*>/i);
+  if (proj && proj.index !== undefined) {
+    const at = proj.index + proj[0].length;
+    const i1 = baseIndent(text);
+    return `${text.slice(0, at)}${eol}${i1}<PropertyGroup>${eol}${i1}${i1}${element}${eol}${i1}</PropertyGroup>${text.slice(at)}`;
+  }
+  return text;
+}
+
+/** Remove an explicit `<ManagePackageVersionsCentrally>false</...>` so an imported props file governs. */
+export function removeCentralManagementOptOut(text: string): string {
+  return text.replace(
+    /[ \t]*<ManagePackageVersionsCentrally>\s*false\s*<\/ManagePackageVersionsCentrally>\s*(?:\r\n|\n|\r)?/i,
+    ""
+  );
+}
+
 export function upsertPackageVersion(text: string, id: string, version: string): string {
   const escaped = escapeRe(id);
   const re = new RegExp(

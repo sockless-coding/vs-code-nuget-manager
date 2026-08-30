@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { NuGetPanel } from "./panel/NuGetPanel";
 import {
+  CpmConversionPlan,
   FeedInfo,
   HostResponsePayload,
   InitialState,
@@ -18,6 +19,7 @@ import { DotnetCli } from "./dotnet/cli";
 import { ProjectRegistry } from "./projects/discovery";
 import { InstalledService } from "./projects/installed";
 import { MutationService } from "./projects/mutations";
+import { CpmConversionService } from "./projects/cpmConvert";
 
 const ALL_SOURCES = "All sources";
 
@@ -41,8 +43,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const installed = new InstalledService(projects, dotnet, feeds, metadata);
   const mutations = new MutationService(projects, dotnet, output);
+  const cpm = new CpmConversionService(projects, dotnet, output);
 
-  const controller = new Controller(feeds, http, search, metadata, installed, mutations, projects);
+  const controller = new Controller(feeds, http, search, metadata, installed, mutations, cpm, projects);
 
   projects.onDidChange(() => NuGetPanel.instance?.sendEvent({ type: "event", event: "projectsChanged" }));
 
@@ -91,6 +94,7 @@ class Controller {
     private readonly metadata: MetadataService,
     private readonly installed: InstalledService,
     private readonly mutations: MutationService,
+    private readonly cpm: CpmConversionService,
     private readonly projects: ProjectRegistry
   ) {}
 
@@ -131,6 +135,14 @@ class Controller {
         const result = await this.mutations.apply(req.request, feed?.isV3 ? undefined : feed?.url);
         NuGetPanel.instance?.sendEvent({ type: "event", event: "installedChanged" });
         return { kind: "mutate", result };
+      }
+
+      case "convertToCpm": {
+        const result = await this.cpm.convert(req.projectPaths, (plan) => confirmCpmConversion(plan));
+        if (result.ok) {
+          NuGetPanel.instance?.sendEvent({ type: "event", event: "installedChanged" });
+        }
+        return { kind: "convertToCpm", result };
       }
 
       case "openExternal":
@@ -249,4 +261,31 @@ class Controller {
       throw err;
     }
   }
+}
+
+/** Modal confirmation for a "Convert to Central Package Management" run. */
+async function confirmCpmConversion(plan: CpmConversionPlan): Promise<boolean> {
+  const detail = [
+    `${plan.targets.length} project(s) → bare <PackageReference> items`,
+    `${plan.versions.length} <PackageVersion> item(s) in ${plan.relativePropsPath}` +
+      (plan.propsExists ? " (existing file, updated in place)" : " (new file)"),
+    plan.bumps.length > 0
+      ? `${plan.bumps.length} reference(s) bumped to the highest version:\n` +
+        plan.bumps
+          .slice(0, 8)
+          .map((b) => `  • ${b.project}: ${b.packageId} ${b.from} → ${b.to}`)
+          .join("\n") +
+        (plan.bumps.length > 8 ? `\n  • …and ${plan.bumps.length - 8} more` : "")
+      : "",
+    ...plan.warnings.map((w) => `⚠ ${w}`)
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const pick = await vscode.window.showWarningMessage(
+    "Convert to Central Package Management?",
+    { modal: true, detail },
+    "Convert"
+  );
+  return pick === "Convert";
 }

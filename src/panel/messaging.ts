@@ -136,6 +136,32 @@ export interface MutationResult {
   restoreNeeded: boolean;
 }
 
+/** What a "Convert to Central Package Management" run will do — shown for confirmation. */
+export interface CpmConversionPlan {
+  /** Absolute path where `Directory.Packages.props` will be written / enabled. */
+  propsPath: string;
+  relativePropsPath: string;
+  /** True when that file already exists and will be updated in place. */
+  propsExists: boolean;
+  targets: { path: string; name: string }[];
+  versions: { id: string; version: string }[];
+  bumps: { project: string; packageId: string; from: string; to: string }[];
+  warnings: string[];
+}
+
+export interface CpmConversionResult {
+  ok: boolean;
+  /** True when the user declined the confirmation prompt. */
+  cancelled?: boolean;
+  propsPath?: string;
+  projectCount: number;
+  packageCount: number;
+  bumps: { project: string; packageId: string; from: string; to: string }[];
+  warnings: string[];
+  restoreNeeded: boolean;
+  message?: string;
+}
+
 /* ------------------------------- Requests -------------------------------- */
 
 export type WebviewRequest =
@@ -147,6 +173,7 @@ export type WebviewRequest =
   | { kind: "listUpdates" }
   | { kind: "listFeeds" }
   | { kind: "mutate"; request: MutationRequest }
+  | { kind: "convertToCpm"; projectPaths: string[] }
   | { kind: "openExternal"; url: string };
 
 export type WebviewMessage = WebviewRequest & { id: number };
@@ -161,6 +188,7 @@ export type HostResponsePayload =
   | { kind: "listUpdates"; packages: InstalledPackage[] }
   | { kind: "listFeeds"; feeds: FeedInfo[] }
   | { kind: "mutate"; result: MutationResult }
+  | { kind: "convertToCpm"; result: CpmConversionResult }
   | { kind: "openExternal" }
   | { kind: "ready"; initialState: InitialState };
 

@@ -219,8 +219,42 @@ export function App() {
     await refreshUpdates();
   };
 
+  const convertToCpm = async () => {
+    const nonCpm = projects.filter((p) => !p.usesCentralPackageManagement);
+    if (nonCpm.length === 0) return;
+    const scoped = preselectProjects.length > 0
+      ? nonCpm.filter((p) => preselectProjects.includes(p.path))
+      : nonCpm;
+    const paths = (scoped.length > 0 ? scoped : nonCpm).map((p) => p.path);
+    setBusy(true);
+    setToast(undefined);
+    try {
+      const r = await request({ kind: "convertToCpm", projectPaths: paths });
+      const res = r.result;
+      if (res.cancelled) return;
+      if (res.ok) {
+        setToast(
+          `Converted ${res.projectCount} project${res.projectCount === 1 ? "" : "s"} to CPM` +
+            (res.bumps.length > 0 ? ` — ${res.bumps.length} reference(s) bumped` : "") +
+            (res.restoreNeeded ? " — run 'dotnet restore' to finish" : "")
+        );
+      } else {
+        setToast(res.message ?? "Conversion failed");
+      }
+      await refreshInstalled();
+    } catch (e: any) {
+      setToast(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /* --------------------------- derived rows --------------------------- */
   const consolidatable = React.useMemo(() => groupInconsistent(installed), [installed]);
+  const hasClassicProjects = React.useMemo(
+    () => projects.some((p) => !p.usesCentralPackageManagement),
+    [projects]
+  );
   const vulnerableCount = React.useMemo(
     () => installed.filter((p) => p.hasVulnerability).length,
     [installed]
@@ -304,6 +338,15 @@ export function App() {
             <input type="checkbox" checked={includeTransitive} onChange={(e) => setIncludeTransitive(e.target.checked)} />
             Include transitive
           </label>
+        )}
+        {tab === "installed" && hasClassicProjects && (
+          <button
+            disabled={busy}
+            title="Move PackageReference versions into a Directory.Packages.props file"
+            onClick={convertToCpm}
+          >
+            Convert to CPM…
+          </button>
         )}
         {tab === "updates" && updates.length > 0 && (
           <button className="primary" disabled={busy} onClick={updateAll}>

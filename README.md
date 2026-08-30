@@ -37,7 +37,9 @@ versions out of your projects.
   loudly.
 - **Central Package Management, handled.** CPM is detected automatically —
   versions go to `Directory.Packages.props`, projects keep bare
-  `<PackageReference>` entries.
+  `<PackageReference>` entries. One click **converts a classic solution to CPM**:
+  versions move into a new `Directory.Packages.props`, conflicts consolidate to the
+  highest version, and every bump is reported.
 - **Safe writes.** Uses the `dotnet` CLI when the .NET SDK is available;
   otherwise edits project files directly while preserving your formatting.
 
@@ -78,6 +80,17 @@ target — updating one manually keeps the pin on the new version. **Unpin** rem
 the lock. Vulnerability and deprecation checks run on pinned packages exactly as
 on any other, and a pinned package with a known advisory gets a prominent
 "pinned & vulnerable" callout.
+
+### Convert to Central Package Management
+
+When the workspace has classic projects, the **Installed** tab shows a **Convert
+to CPM…** button. It works on the solution (or folder) the manager was opened
+from: it creates a single `Directory.Packages.props` next to the `.sln` (or an
+existing one, enabled in place), moves every `PackageReference` version into a
+`<PackageVersion>` item, and strips the versions from the projects. Where the
+same package is referenced at different versions the highest one wins; a
+confirmation prompt lists every bump before anything is written, and any other
+classic projects under that folder are pulled in too so they stay buildable.
 
 ### Consolidate — one version everywhere
 

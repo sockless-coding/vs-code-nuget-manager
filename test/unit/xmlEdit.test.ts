@@ -4,7 +4,10 @@ import {
   upsertPackageReference,
   removePackageReference,
   upsertPackageVersion,
-  removePackageVersion
+  removePackageVersion,
+  stripVersionAttributes,
+  setManagePackageVersionsCentrally,
+  removeCentralManagementOptOut
 } from "../../src/projects/xmlEdit";
 
 const classic = `<Project Sdk="Microsoft.NET.Sdk">
@@ -83,4 +86,36 @@ test("upsertPackageVersion updates and inserts", () => {
 test("removePackageVersion drops the item", () => {
   const out = removePackageVersion(props, "Newtonsoft.Json");
   assert.doesNotMatch(out, /<PackageVersion/);
+});
+
+test("stripVersionAttributes makes a reference bare for CPM", () => {
+  const out = stripVersionAttributes(classic, "Newtonsoft.Json");
+  assert.match(out, /<PackageReference Include="Newtonsoft\.Json" \/>/);
+  assert.doesNotMatch(out, /Version=/);
+});
+
+test("stripVersionAttributes also removes VersionOverride and keeps other attributes", () => {
+  const src = `<Project>\n  <ItemGroup>\n    <PackageReference Include="Foo" Version="1.0.0" VersionOverride="2.0.0" PrivateAssets="all" />\n  </ItemGroup>\n</Project>\n`;
+  const out = stripVersionAttributes(src, "Foo");
+  assert.match(out, /<PackageReference Include="Foo" PrivateAssets="all" \/>/);
+});
+
+test("stripVersionAttributes is a no-op when the reference is absent", () => {
+  assert.equal(stripVersionAttributes(classic, "Nope"), classic);
+});
+
+test("setManagePackageVersionsCentrally flips an existing flag and inserts a missing one", () => {
+  const off = `<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n</Project>\n`;
+  assert.match(setManagePackageVersionsCentrally(off, true), /<ManagePackageVersionsCentrally>true<\/ManagePackageVersionsCentrally>/);
+
+  const missing = `<Project>\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n`;
+  const added = setManagePackageVersionsCentrally(missing, true);
+  assert.match(added, /<PropertyGroup>\s*\n\s*<ManagePackageVersionsCentrally>true<\/ManagePackageVersionsCentrally>/);
+});
+
+test("removeCentralManagementOptOut only strips an explicit false", () => {
+  const off = `<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n</Project>\n`;
+  assert.doesNotMatch(removeCentralManagementOptOut(off), /ManagePackageVersionsCentrally/);
+  const on = off.replace("false", "true");
+  assert.equal(removeCentralManagementOptOut(on), on);
 });
