@@ -75,8 +75,13 @@ them on a single version in one step.
 1. Install the extension.
 2. Open a workspace that contains a `.csproj`, `.fsproj` or `.vbproj`.
 3. Run **Manage NuGet Packages…** from the Command Palette — or click the package
-   icon in the editor title bar of a project file, or right-click a project file
-   in the Explorer.
+   icon in the editor title bar, or right-click in the Explorer, on a project
+   file, a solution (`.sln` / `.slnx`), or a `Directory.Packages.props`.
+
+How you open it sets the initial project selection: from a single project only
+that project is preselected; from a solution or `Directory.Packages.props`, every
+project it governs; from the Command Palette, all projects. A **select all / none**
+checkbox in the project list lets you adjust it.
 
 Private feeds are picked up automatically from your solution / user / machine
 `nuget.config`. Credentials for authenticated feeds are stored in VS Code

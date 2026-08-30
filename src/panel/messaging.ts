@@ -163,6 +163,12 @@ export interface InitialState {
   projects: ProjectInfo[];
   /** Minimum age in days before a package version is trusted; 0 disables the check. */
   minimumPackageAgeDays: number;
+  /**
+   * Project paths to preselect for install/update, based on the file the manager
+   * was opened from (a project, solution or `Directory.Packages.props`). Empty
+   * when opened without a specific scope (e.g. the command palette).
+   */
+  preselectProjectPaths: string[];
 }
 
 export type HostResponse =
@@ -173,6 +179,7 @@ export type HostEvent =
   | { type: "event"; event: "projectsChanged" }
   | { type: "event"; event: "installedChanged" }
   | { type: "event"; event: "settingsChanged" }
+  | { type: "event"; event: "scopeChanged"; preselectProjectPaths: string[] }
   | { type: "event"; event: "progress"; message: string; done: boolean };
 
 export type HostMessage = ({ type: "response" } & HostResponse) | HostEvent;

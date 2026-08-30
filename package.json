@@ -2,7 +2,7 @@
   "name": "vs-code-nuget-manager",
   "displayName": "Sockless NuGet Package Manager",
   "description": "Visual NuGet package manager for VS Code — browse, install, update and consolidate packages with a Visual Studio-like experience.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "sockless-coding",
   "license": "MIT",
   "author": "Jimmy Everling",
@@ -32,7 +32,10 @@
   "activationEvents": [
     "workspaceContains:**/*.csproj",
     "workspaceContains:**/*.fsproj",
-    "workspaceContains:**/*.vbproj"
+    "workspaceContains:**/*.vbproj",
+    "workspaceContains:**/*.sln",
+    "workspaceContains:**/*.slnx",
+    "workspaceContains:**/Directory.Packages.props"
   ],
   "contributes": {
     "commands": [
@@ -59,14 +62,14 @@
       "editor/title": [
         {
           "command": "nuget.openManager",
-          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj || resourceExtname == .sln || resourceExtname == .slnx || resourceFilename == Directory.Packages.props || resourceFilename == packages.config",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
           "command": "nuget.openManager",
-          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj || resourceFilename == packages.config",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj || resourceExtname == .sln || resourceExtname == .slnx || resourceFilename == Directory.Packages.props || resourceFilename == packages.config",
           "group": "7_modification"
         }
       ]

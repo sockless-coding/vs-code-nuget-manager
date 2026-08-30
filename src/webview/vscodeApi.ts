@@ -25,6 +25,7 @@ let nextId = 1;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 const eventListeners = new Set<(event: HostEventName) => void>();
 const progressListeners = new Set<(message: string, done: boolean) => void>();
+const scopeListeners = new Set<(preselectProjectPaths: string[]) => void>();
 
 window.addEventListener("message", (e: MessageEvent<HostMessage>) => {
   const msg = e.data;
@@ -42,6 +43,8 @@ window.addEventListener("message", (e: MessageEvent<HostMessage>) => {
   if (msg.type === "event") {
     if (msg.event === "progress") {
       progressListeners.forEach((l) => l(msg.message, msg.done));
+    } else if (msg.event === "scopeChanged") {
+      scopeListeners.forEach((l) => l(msg.preselectProjectPaths));
     } else {
       eventListeners.forEach((l) => l(msg.event));
     }
@@ -66,4 +69,9 @@ export function onHostEvent(listener: (event: HostEventName) => void): () => voi
 export function onProgress(listener: (message: string, done: boolean) => void): () => void {
   progressListeners.add(listener);
   return () => progressListeners.delete(listener);
+}
+
+export function onScopeChange(listener: (preselectProjectPaths: string[]) => void): () => void {
+  scopeListeners.add(listener);
+  return () => scopeListeners.delete(listener);
 }

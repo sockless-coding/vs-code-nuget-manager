@@ -7,7 +7,7 @@ import type {
   PackageSummary,
   ProjectInfo
 } from "../panel/messaging";
-import { onHostEvent, onProgress, request } from "./vscodeApi";
+import { onHostEvent, onProgress, onScopeChange, request } from "./vscodeApi";
 import { PackageList, buildInstalledTree, installedToRow, summaryToRow } from "./components/PackageList";
 import { PackageDetails } from "./components/PackageDetails";
 
@@ -22,6 +22,7 @@ export function App() {
   const [source, setSource] = React.useState(ALL_SOURCES);
   const [feeds, setFeeds] = React.useState<FeedInfo[]>([]);
   const [projects, setProjects] = React.useState<ProjectInfo[]>([]);
+  const [preselectProjects, setPreselectProjects] = React.useState<string[]>([]);
 
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<PackageSummary[]>([]);
@@ -52,6 +53,7 @@ export function App() {
       setMinPackageAgeDays(r.initialState.minimumPackageAgeDays);
       setFeeds(r.initialState.feeds);
       setProjects(r.initialState.projects);
+      setPreselectProjects(r.initialState.preselectProjectPaths ?? []);
     });
   }, []);
 
@@ -72,9 +74,11 @@ export function App() {
       }
     });
     const offProgress = onProgress((message, done) => setProgress(done ? undefined : message));
+    const offScope = onScopeChange((paths) => setPreselectProjects(paths));
     return () => {
       offEvent();
       offProgress();
+      offScope();
     };
   }, []);
 
@@ -332,6 +336,7 @@ export function App() {
             <PackageDetails
               detail={detail}
               projects={projects}
+              preselectProjectPaths={preselectProjects}
               installed={installed}
               includePrerelease={includePrerelease}
               minPackageAgeDays={minPackageAgeDays}

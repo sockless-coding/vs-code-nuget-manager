@@ -12,6 +12,8 @@ import { request } from "../vscodeApi";
 interface Props {
   detail: PackageDetail;
   projects: ProjectInfo[];
+  /** Projects to preselect based on the file the manager was opened from. */
+  preselectProjectPaths: string[];
   installed: InstalledPackage[];
   includePrerelease: boolean;
   minPackageAgeDays: number;
@@ -23,6 +25,7 @@ interface Props {
 export function PackageDetails({
   detail,
   projects,
+  preselectProjectPaths,
   installed,
   includePrerelease,
   minPackageAgeDays,
@@ -53,15 +56,35 @@ export function PackageDetails({
   const selectedBelowMinAge = minPackageAgeDays > 0 && selectedAgeDays < minPackageAgeDays;
 
   const [selectedProjects, setSelectedProjects] = React.useState<Set<string>>(new Set());
+  const scopeKey = preselectProjectPaths.join("|");
   React.useEffect(() => {
-    // Preselect projects that already have the package (for update/uninstall),
-    // otherwise all projects (for a fresh install).
+    // Preselection priority:
+    //   1. the scope the manager was opened from (a project, solution or props file),
+    //   2. projects that already have the package (for update/uninstall),
+    //   3. every project (for a fresh install).
+    const known = new Set(projects.map((p) => p.path));
+    const scoped = preselectProjectPaths.filter((p) => known.has(p));
     setSelectedProjects(
-      installedProjectPaths.size > 0
+      scoped.length > 0
+        ? new Set(scoped)
+        : installedProjectPaths.size > 0
         ? new Set(installedProjectPaths)
         : new Set(projects.map((p) => p.path))
     );
-  }, [detail.id, projects.length]);
+  }, [detail.id, projects.length, scopeKey]);
+
+  const allSelected = projects.length > 0 && projects.every((p) => selectedProjects.has(p.path));
+  const someSelected = projects.some((p) => selectedProjects.has(p.path));
+  const selectAllRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected && !allSelected;
+    }
+  }, [someSelected, allSelected]);
+
+  const toggleAllProjects = () => {
+    setSelectedProjects(allSelected ? new Set() : new Set(projects.map((p) => p.path)));
+  };
 
   const toggleProject = (path: string) => {
     setSelectedProjects((prev) => {
@@ -197,7 +220,17 @@ export function PackageDetails({
 
       <div className="project-list">
         <div className="project-list-head">
-          <span>Project</span>
+          <span>
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleAllProjects}
+              disabled={busy || projects.length === 0}
+              title={allSelected ? "Deselect all projects" : "Select all projects"}
+            />
+            Project
+          </span>
           <span>Installed</span>
         </div>
         {projects.length === 0 && <div className="empty">No projects found in this workspace.</div>}

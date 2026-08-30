@@ -58,8 +58,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("nuget.openManager", () => {
+    vscode.commands.registerCommand("nuget.openManager", (uri?: vscode.Uri) => {
+      const alreadyOpen = !!NuGetPanel.instance;
+      controller.setOpenScope(projects.resolveSelectionScope(uri));
       NuGetPanel.createOrShow(context, (req) => controller.handle(req));
+      if (alreadyOpen) {
+        NuGetPanel.instance?.sendEvent({
+          type: "event",
+          event: "scopeChanged",
+          preselectProjectPaths: controller.openScope
+        });
+      }
     }),
     vscode.commands.registerCommand("nuget.refresh", async () => {
       feeds.refresh();
@@ -84,6 +93,13 @@ class Controller {
     private readonly mutations: MutationService,
     private readonly projects: ProjectRegistry
   ) {}
+
+  /** Project paths to preselect, derived from the file the manager was opened from. */
+  openScope: string[] = [];
+
+  setOpenScope(paths: string[]): void {
+    this.openScope = paths;
+  }
 
   async handle(req: WebviewRequest): Promise<HostResponsePayload | undefined> {
     switch (req.kind) {
@@ -133,7 +149,8 @@ class Controller {
         .get<boolean>("defaultIncludePrerelease", false),
       feeds: this.feedInfos(),
       projects: this.projectInfos(),
-      minimumPackageAgeDays: this.minimumPackageAgeDays()
+      minimumPackageAgeDays: this.minimumPackageAgeDays(),
+      preselectProjectPaths: this.openScope
     };
   }
 
