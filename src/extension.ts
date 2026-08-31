@@ -41,13 +41,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   projects.start();
   await projects.refresh();
 
-  const installed = new InstalledService(projects, dotnet, feeds, metadata);
+  const installed = new InstalledService(projects, dotnet, feeds, metadata, {
+    progress: (message, done) =>
+      NuGetPanel.instance?.sendEvent({ type: "event", event: "progress", message, done }),
+    enriched: (phase, packages) =>
+      NuGetPanel.instance?.sendEvent({ type: "event", event: "installedEnriched", phase, packages })
+  });
   const mutations = new MutationService(projects, dotnet, output);
   const cpm = new CpmConversionService(projects, dotnet, output);
 
   const controller = new Controller(feeds, http, search, metadata, installed, mutations, cpm, projects);
 
-  projects.onDidChange(() => NuGetPanel.instance?.sendEvent({ type: "event", event: "projectsChanged" }));
+  projects.onDidChange(() => {
+    installed.invalidate();
+    NuGetPanel.instance?.sendEvent({ type: "event", event: "projectsChanged" });
+  });
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -55,6 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         feeds.refresh();
         http.clearCache();
         dotnet.invalidateAvailability();
+        installed.invalidate();
         NuGetPanel.instance?.sendEvent({ type: "event", event: "settingsChanged" });
       }
     })
@@ -76,6 +85,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("nuget.refresh", async () => {
       feeds.refresh();
       http.clearCache();
+      installed.invalidate();
       await projects.refresh();
       NuGetPanel.instance?.sendEvent({ type: "event", event: "installedChanged" });
     })
@@ -126,9 +136,6 @@ class Controller {
         const { packages, sdkAvailable } = await this.installed.list(req.includeTransitive);
         return { kind: "listInstalled", packages, sdkAvailable };
       }
-
-      case "listUpdates":
-        return { kind: "listUpdates", packages: await this.installed.listUpdates(this.minimumPackageAgeDays()) };
 
       case "mutate": {
         const feed = req.request.source ? this.feeds.findByName(req.request.source) : undefined;

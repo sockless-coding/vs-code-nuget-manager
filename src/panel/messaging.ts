@@ -170,7 +170,6 @@ export type WebviewRequest =
   | { kind: "getPackageDetail"; packageId: string; source: string; includePrerelease: boolean }
   | { kind: "listProjects" }
   | { kind: "listInstalled"; includeTransitive: boolean }
-  | { kind: "listUpdates" }
   | { kind: "listFeeds" }
   | { kind: "mutate"; request: MutationRequest }
   | { kind: "convertToCpm"; projectPaths: string[] }
@@ -185,7 +184,6 @@ export type HostResponsePayload =
   | { kind: "getPackageDetail"; detail: PackageDetail }
   | { kind: "listProjects"; projects: ProjectInfo[] }
   | { kind: "listInstalled"; packages: InstalledPackage[]; sdkAvailable: boolean }
-  | { kind: "listUpdates"; packages: InstalledPackage[] }
   | { kind: "listFeeds"; feeds: FeedInfo[] }
   | { kind: "mutate"; result: MutationResult }
   | { kind: "convertToCpm"; result: CpmConversionResult }
@@ -215,6 +213,12 @@ export type HostEvent =
   | { type: "event"; event: "installedChanged" }
   | { type: "event"; event: "settingsChanged" }
   | { type: "event"; event: "scopeChanged"; preselectProjectPaths: string[] }
-  | { type: "event"; event: "progress"; message: string; done: boolean };
+  | { type: "event"; event: "progress"; message: string; done: boolean }
+  | {
+      type: "event";
+      event: "installedEnriched";
+      phase: "updates" | "vulnerabilities" | "done";
+      packages: InstalledPackage[];
+    };
 
 export type HostMessage = ({ type: "response" } & HostResponse) | HostEvent;

@@ -2,7 +2,7 @@
   "name": "vs-code-nuget-manager",
   "displayName": "Sockless NuGet Package Manager",
   "description": "Visual NuGet package manager for VS Code — browse, install, update and consolidate packages with a Visual Studio-like experience.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "sockless-coding",
   "license": "MIT",
   "author": "Jimmy Everling",
@@ -109,6 +109,11 @@
           "default": 7,
           "minimum": 0,
           "description": "Minimum age in days before a newly published package version is trusted. Newer versions are flagged as a potential supply-chain risk and held back from 'Update All' and the default version selection. Set to 0 to disable the check."
+        },
+        "nuget.useDotnetListForEnumeration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reconcile the Installed and Updates views with 'dotnet list package --outdated / --vulnerable' after the fast on-disk scan. Slower on large solutions, but uses the .NET SDK's exact package resolution for floating versions and version ranges."
         }
       }
     }

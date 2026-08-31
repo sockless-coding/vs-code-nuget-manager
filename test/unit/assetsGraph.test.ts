@@ -62,6 +62,24 @@ test("preserves original casing in displayName", () => {
   assert.equal(g.displayName.get("serilog.sinks.console"), "Serilog.Sinks.Console");
 });
 
+test("captures resolved versions from the targets section", () => {
+  const g = buildGraph(assets);
+  assert.equal(g.resolved.get("serilog"), "3.1.1");
+  assert.equal(g.resolved.get("serilog.sinks.console"), "5.0.0");
+  assert.equal(g.resolved.get("newtonsoft.json"), "12.0.3");
+});
+
+test("mergeGraphs unions resolved versions, first value wins", () => {
+  const a = buildGraph(assets);
+  const b = buildGraph({
+    targets: { "net8.0": { "Serilog/4.0.0": { type: "package" }, "A/1.0.0": { type: "package" } } },
+    projectFileDependencyGroups: { "net8.0": ["Serilog >= 4.0.0", "A >= 1.0.0"] }
+  });
+  const merged = mergeGraphs([a, b]);
+  assert.equal(merged.resolved.get("serilog"), "3.1.1");
+  assert.equal(merged.resolved.get("a"), "1.0.0");
+});
+
 test("mergeGraphs unions edges and advisories", () => {
   const a = buildGraph(assets);
   const b = buildGraph({

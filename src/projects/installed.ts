@@ -1,18 +1,27 @@
 /**
- * Builds the "Installed" and "Updates" views.
+ * Builds the "Installed" view and its update / vulnerability enrichment.
  *
- * Fast path: `dotnet list <target> package --format json` (one call per solution,
- * or per project when there is no solution), plus `--outdated` for update info and
- * `--vulnerable --include-transitive` for advisories. Fallback (no SDK): read
- * PackageReference/PackageVersion from the parsed project model and query each
- * feed's flat container for the latest version.
+ * The list is produced in two phases so a large solution paints immediately:
  *
- * Regardless of path, `obj/project.assets.json` is read for the resolved
- * dependency graph (who pulls in each transitive package) and for audit
- * warnings, so a vulnerable transitive package always surfaces.
+ *  1. A local snapshot, read entirely from disk with no `dotnet` invocation:
+ *     `PackageReference` / `PackageVersion` from the parsed project + CPM model for
+ *     requested versions, and every project's `obj/project.assets.json` for the
+ *     resolved dependency graph, resolved versions, transitive classification and
+ *     NuGet audit warnings (offline vulnerabilities).
+ *
+ *  2. Background enrichment: the latest available version and publish date for each
+ *     direct package (feed flat-container queries, concurrency-limited), plus an
+ *     online advisory top-up. Progress and partial results are streamed to the
+ *     webview through the {@link InstalledNotifier}.
+ *
+ * Setting `nuget.useDotnetListForEnumeration` additionally reconciles the snapshot
+ * with `dotnet list package --outdated` / `--vulnerable` (run in parallel, with
+ * `--no-restore`) during enrichment, for projects that need `dotnet`'s exact
+ * resolution semantics.
  */
 
 import * as path from "path";
+import * as vscode from "vscode";
 import { InstalledPackage } from "../panel/messaging";
 import { DotnetCli, DotnetListOutput, DotnetListPackage } from "../dotnet/cli";
 import { ProjectRegistry, WorkspaceProject } from "./discovery";
@@ -20,7 +29,7 @@ import { FeedRegistry } from "../nuget/feeds";
 import { MetadataService } from "../nuget/metadata";
 import { maxVersion } from "../nuget/NuGetVersion";
 import { isExactVersionPin, stripVersionPin } from "../nuget/versionRange";
-import { Advisory, DependencyGraph, mergeGraphs, readAssetsGraph } from "./assetsGraph";
+import { Advisory, DependencyGraph, mergeGraphs, readAssetsGraphAsync } from "./assetsGraph";
 import { mapWithConcurrency } from "../util";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -32,170 +41,232 @@ const SEVERITY_WORDS: Record<string, number> = {
   critical: 3
 };
 
+/** How the extension host is told about streamed enrichment progress and results. */
+export interface InstalledNotifier {
+  /** A short status line for the webview banner. `done` clears it. */
+  progress(message: string, done: boolean): void;
+  /** A fresh copy of the installed list, filtered for the current view. */
+  enriched(phase: "updates" | "vulnerabilities" | "done", packages: InstalledPackage[]): void;
+}
+
 export class InstalledService {
+  /** The full unfiltered snapshot (direct + transitive), shared by every consumer. */
+  private snapshot: InstalledPackage[] | undefined;
+  private snapshotPromise: Promise<InstalledPackage[]> | undefined;
+  /** Bumped whenever the on-disk model changes; stale async work checks against it. */
+  private runToken = 0;
+  private enrichPromise: Promise<void> | undefined;
+  private enrichToken = -1;
+  /** The `includeTransitive` value of the last `list()` call, for enriched pushes. */
+  private lastIncludeTransitive = false;
+
   constructor(
     private readonly projects: ProjectRegistry,
     private readonly dotnet: DotnetCli,
     private readonly feeds: FeedRegistry,
-    private readonly metadata: MetadataService
+    private readonly metadata: MetadataService,
+    private readonly notify: InstalledNotifier
   ) {}
 
+  /** Drop cached results; the next `list()` rebuilds from disk. */
+  invalidate(): void {
+    this.runToken++;
+    this.snapshot = undefined;
+    this.snapshotPromise = undefined;
+    this.enrichPromise = undefined;
+  }
+
   async list(includeTransitive: boolean): Promise<{ packages: InstalledPackage[]; sdkAvailable: boolean }> {
-    const sdkAvailable = await this.dotnet.isAvailable();
+    this.lastIncludeTransitive = includeTransitive;
+    const snap = await this.ensureSnapshot();
+    void this.ensureEnrichment();
+    return {
+      packages: this.filterForView(snap, includeTransitive),
+      sdkAvailable: await this.dotnet.isAvailable()
+    };
+  }
+
+  /* --------------------------- phase 1: snapshot --------------------------- */
+
+  private ensureSnapshot(): Promise<InstalledPackage[]> {
+    if (this.snapshot) return Promise.resolve(this.snapshot);
+    if (!this.snapshotPromise) {
+      const token = this.runToken;
+      this.snapshotPromise = this.buildLocalSnapshot().then((snap) => {
+        if (token === this.runToken) this.snapshot = snap;
+        this.snapshotPromise = undefined;
+        return this.snapshot ?? snap;
+      });
+    }
+    return this.snapshotPromise;
+  }
+
+  private async buildLocalSnapshot(): Promise<InstalledPackage[]> {
+    const projects = this.projects.getProjects();
     const merged = new Map<string, InstalledPackage>();
 
-    if (sdkAvailable) {
-      for (const target of this.resolveTargets()) {
-        const flags = includeTransitive ? ["--include-transitive"] : [];
-        const out = await this.dotnet.listPackages(target, flags);
-        if (out) {
-          this.foldDotnetOutput(out, merged, includeTransitive);
+    // Requested versions + per-project direct references from the parsed model.
+    for (const project of projects) this.foldProjectModel(project, merged);
+
+    // Resolved dependency graph — one assets file per project, read in parallel.
+    const graphs = await mapWithConcurrency(projects, 12, (p) =>
+      readAssetsGraphAsync(path.dirname(p.info.path))
+    );
+    const perProject = projects.map((p, i) => ({ path: p.info.path, graph: graphs[i] }));
+    const graph = mergeGraphs(graphs);
+
+    // Add packages that appear only in the resolved graph (transitive, or vulnerable
+    // transitive the audit logs flagged).
+    for (const [key, display] of graph.displayName) {
+      if (merged.has(key)) continue;
+      if (!graph.resolved.has(key) && !graph.vulnerabilities.get(key)?.length) continue;
+      merged.set(key, {
+        id: display,
+        requestedVersion: "",
+        projects: [],
+        projectVersions: [],
+        transitive: true
+      });
+    }
+
+    for (const [key, entry] of merged) {
+      if (graph.topLevel.has(key)) entry.transitive = false;
+      else if (entry.projectVersions.length === 0) entry.transitive = true;
+
+      const resolved = graph.resolved.get(key);
+      if (resolved) entry.resolvedVersion = resolved;
+
+      applyGraphEdges(entry, key, graph);
+
+      const advisories = graph.vulnerabilities.get(key);
+      if (advisories?.length) this.applyAdvisories(entry, advisories);
+      for (const { path: projectPath, graph: g } of perProject) {
+        if (g?.vulnerabilities.get(key)?.length) {
+          this.markVulnerableProject(entry, projectPath);
+          if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
         }
-        // Always scan for advisories, transitive included, no matter the toggle.
-        const vuln = await this.dotnet.listPackages(target, ["--vulnerable", "--include-transitive"]);
-        if (vuln) this.foldVulnerable(vuln, merged);
       }
     }
 
-    if (merged.size === 0) {
-      // Fallback to the parsed project model.
-      for (const project of this.projects.getProjects()) {
-        this.foldProjectModel(project, merged);
-      }
-    }
-
-    this.applyGraph(merged);
     this.markPinned(merged);
     await this.applyIcons(merged.values());
 
-    return { packages: [...merged.values()].sort((a, b) => a.id.localeCompare(b.id)), sdkAvailable };
+    return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
   }
 
-  /** Installed packages that have a newer version available. */
-  async listUpdates(minimumPackageAgeDays = 0): Promise<InstalledPackage[]> {
-    const sdkAvailable = await this.dotnet.isAvailable();
-    const merged = new Map<string, InstalledPackage>();
-    let updates: InstalledPackage[];
+  private filterForView(snapshot: InstalledPackage[], includeTransitive: boolean): InstalledPackage[] {
+    return snapshot
+      .filter((p) => includeTransitive || !p.transitive || p.hasVulnerability)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
 
-    if (sdkAvailable) {
-      for (const target of this.resolveTargets()) {
-        const out = await this.dotnet.listPackages(target, ["--outdated"]);
-        if (out) this.foldDotnetOutput(out, merged, false);
-      }
-      this.markPinned(merged);
-      updates = [...merged.values()]
-        .filter((p) => p.latestVersion && p.latestVersion !== stripVersionPin(p.requestedVersion))
-        .sort((a, b) => a.id.localeCompare(b.id));
-      await this.applyIcons(updates);
-    } else {
-      // Fallback: compute latest ourselves.
-      const base = await this.list(false);
-      await Promise.all(
-        base.packages.map(async (pkg) => {
-          pkg.latestVersion = await this.latestAcrossFeeds(pkg.id, false);
-        })
+  /* -------------------------- phase 2: enrichment ------------------------- */
+
+  private ensureEnrichment(): Promise<void> {
+    if (this.enrichPromise && this.enrichToken === this.runToken) return this.enrichPromise;
+    const token = this.runToken;
+    this.enrichToken = token;
+    this.enrichPromise = this.runEnrichment(token)
+      .catch(() => {
+        /* enrichment is best-effort */
+      })
+      .finally(() => {
+        if (this.enrichToken === token) this.notify.progress("", true);
+      });
+    return this.enrichPromise;
+  }
+
+  private async runEnrichment(token: number): Promise<void> {
+    const snap = await this.ensureSnapshot();
+    if (token !== this.runToken) return;
+
+    const feeds = this.feeds.getEnabledV3Feeds();
+    const direct = snap.filter((p) => !p.transitive);
+    const includePrerelease = vscode.workspace
+      .getConfiguration("nuget")
+      .get<boolean>("defaultIncludePrerelease", false);
+
+    if (feeds.length > 0 && direct.length > 0) {
+      const total = direct.length;
+      let done = 0;
+      let lastPush = 0;
+      this.notify.progress(`Checking ${total} package${total === 1 ? "" : "s"} for updates…`, false);
+      await mapWithConcurrency(direct, 12, async (pkg) => {
+        if (token !== this.runToken) return;
+        const latest = await this.latestAcrossFeeds(pkg.id, includePrerelease);
+        if (latest) pkg.latestVersion = latest;
+        done++;
+        this.notify.progress(`Checking ${total} packages for updates… (${done}/${total})`, false);
+        if (Date.now() - lastPush > 400) {
+          lastPush = Date.now();
+          this.pushEnriched("updates");
+        }
+      });
+      if (token !== this.runToken) return;
+      this.pushEnriched("updates");
+
+      const outdated = direct.filter(
+        (p) => p.latestVersion && p.latestVersion !== stripVersionPin(p.requestedVersion)
       );
-      updates = base.packages
-        .filter((p) => p.latestVersion && p.latestVersion !== stripVersionPin(p.requestedVersion))
-        .sort((a, b) => a.id.localeCompare(b.id));
-    }
+      if (outdated.length > 0) {
+        this.notify.progress("Checking release dates…", false);
+        await this.applyLatestPublished(outdated, this.minimumPackageAgeDays());
+        if (token !== this.runToken) return;
+        this.pushEnriched("updates");
+      }
 
-    await this.applyLatestPublished(updates, minimumPackageAgeDays);
-    return updates;
-  }
-
-  private resolveTargets(): string[] {
-    const projects = this.projects.getProjects();
-    const solutions = new Set<string>();
-    const looseProjects: string[] = [];
-    for (const p of projects) {
-      if (p.info.solution) solutions.add(p.info.solution);
-      else looseProjects.push(p.info.path);
-    }
-    return [...solutions, ...looseProjects];
-  }
-
-  private foldDotnetOutput(
-    out: DotnetListOutput,
-    merged: Map<string, InstalledPackage>,
-    includeTransitive: boolean
-  ): void {
-    for (const project of out.projects ?? []) {
-      // `dotnet list --format json` emits forward-slash paths; the project
-      // registry (and thus the webview's ProjectInfo.path) uses OS-native paths.
-      // Canonicalise so per-project lookups in the details view line up.
-      const projectPath = this.projects.findByPath(project.path)?.info.path ?? path.normalize(project.path);
-      for (const fw of project.frameworks ?? []) {
-        const groups: [boolean, typeof fw.topLevelPackages][] = [
-          [false, fw.topLevelPackages ?? []]
-        ];
-        if (includeTransitive) groups.push([true, fw.transitivePackages ?? []]);
-
-        for (const [transitive, list] of groups) {
-          for (const pkg of list ?? []) {
-            const key = pkg.id.toLowerCase();
-            const existing = merged.get(key);
-            const entry: InstalledPackage = existing ?? {
-              id: pkg.id,
-              requestedVersion: pkg.requestedVersion ?? pkg.resolvedVersion ?? "",
-              resolvedVersion: pkg.resolvedVersion,
-              projects: [],
-              projectVersions: [],
-              transitive
-            };
-            if (!existing) merged.set(key, entry);
-            entry.transitive = entry.transitive && transitive;
-            if (pkg.requestedVersion && !entry.requestedVersion) entry.requestedVersion = pkg.requestedVersion;
-            if (pkg.resolvedVersion) entry.resolvedVersion = pkg.resolvedVersion;
-            if (pkg.latestVersion) entry.latestVersion = pkg.latestVersion;
-            if (pkg.deprecationReasons?.length) entry.deprecated = true;
-            if (pkg.vulnerabilities?.length) this.applyAdvisories(entry, toAdvisories(pkg.vulnerabilities));
-            if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
-            if (!transitive) {
-              const v = pkg.requestedVersion ?? pkg.resolvedVersion ?? "";
-              if (v && !entry.projectVersions.some((pv) => pv.project === projectPath)) {
-                entry.projectVersions.push({ project: projectPath, version: v });
-              }
-            }
+      this.notify.progress("Checking for known vulnerabilities…", false);
+      await mapWithConcurrency(direct, 8, async (pkg) => {
+        if (token !== this.runToken) return;
+        const version = cleanVersion(pkg.resolvedVersion || pkg.requestedVersion || "");
+        if (!version) return;
+        for (const feed of feeds) {
+          try {
+            const advisories = await this.metadata.vulnerabilitiesFor(feed.url, pkg.id, version);
+            if (advisories.length) this.applyAdvisories(pkg, advisories);
+            // The advisory database is global; the first reachable feed answers for all.
+            break;
+          } catch {
+            /* try the next feed */
           }
         }
-      }
+      });
+      if (token !== this.runToken) return;
+      this.pushEnriched("vulnerabilities");
+    }
+
+    if (this.useDotnetListForEnumeration() && (await this.dotnet.isAvailable())) {
+      await this.reconcileWithDotnet(snap, token);
+      if (token !== this.runToken) return;
+    }
+
+    this.pushEnriched("done");
+  }
+
+  private pushEnriched(phase: "updates" | "vulnerabilities" | "done"): void {
+    if (!this.snapshot) return;
+    this.notify.enriched(phase, this.filterForView(this.snapshot, this.lastIncludeTransitive));
+  }
+
+  /** Opt-in: fold `dotnet list --outdated` / `--vulnerable` over the snapshot. */
+  private async reconcileWithDotnet(snap: InstalledPackage[], token: number): Promise<void> {
+    const byId = new Map(snap.map((p) => [p.id.toLowerCase(), p]));
+    this.notify.progress("Reconciling with dotnet…", false);
+    const passes = this.resolveTargets().flatMap((target) => [
+      this.dotnet.listPackages(target, ["--outdated", "--no-restore"]),
+      this.dotnet.listPackages(target, ["--vulnerable", "--include-transitive", "--no-restore"])
+    ]);
+    const results = await Promise.all(passes);
+    if (token !== this.runToken) return;
+    for (let i = 0; i < results.length; i++) {
+      const out = results[i];
+      if (!out) continue;
+      if (i % 2 === 0) this.foldOutdated(out, byId);
+      else this.foldVulnerable(out, byId);
     }
   }
 
-  /** Fold the `--vulnerable` pass: adds transitive entries even when the toggle is off. */
-  private foldVulnerable(out: DotnetListOutput, merged: Map<string, InstalledPackage>): void {
-    for (const project of out.projects ?? []) {
-      const projectPath = this.projects.findByPath(project.path)?.info.path ?? path.normalize(project.path);
-      for (const fw of project.frameworks ?? []) {
-        const groups: [boolean, DotnetListPackage[] | undefined][] = [
-          [false, fw.topLevelPackages],
-          [true, fw.transitivePackages]
-        ];
-        for (const [transitive, list] of groups) {
-          for (const pkg of list ?? []) {
-            if (!pkg.vulnerabilities?.length) continue;
-            const key = pkg.id.toLowerCase();
-            const existing = merged.get(key);
-            const entry: InstalledPackage = existing ?? {
-              id: pkg.id,
-              requestedVersion: pkg.requestedVersion ?? pkg.resolvedVersion ?? "",
-              resolvedVersion: pkg.resolvedVersion,
-              projects: [],
-              projectVersions: [],
-              transitive
-            };
-            if (!existing) merged.set(key, entry);
-            else entry.transitive = entry.transitive && transitive;
-            if (pkg.resolvedVersion) entry.resolvedVersion = pkg.resolvedVersion;
-            if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
-            this.applyAdvisories(entry, toAdvisories(pkg.vulnerabilities));
-            this.markVulnerableProject(entry, projectPath);
-          }
-        }
-      }
-    }
-  }
+  /* ------------------------------ folding -------------------------------- */
 
   private foldProjectModel(project: WorkspaceProject, merged: Map<string, InstalledPackage>): void {
     for (const ref of project.parsed.packageReferences) {
@@ -213,6 +284,7 @@ export class InstalledService {
         transitive: false
       };
       if (!existing) merged.set(key, entry);
+      entry.transitive = false;
       if (version && !entry.requestedVersion) entry.requestedVersion = version;
       if (!entry.projects.includes(project.info.path)) entry.projects.push(project.info.path);
       if (version && !entry.projectVersions.some((pv) => pv.project === project.info.path)) {
@@ -221,45 +293,66 @@ export class InstalledService {
     }
   }
 
-  /** Attach `requiredBy` / `dependsOn` and graph-sourced advisories. */
-  private applyGraph(merged: Map<string, InstalledPackage>): void {
-    const perProject = this.projects.getProjects().map((p) => ({
-      path: p.info.path,
-      graph: readAssetsGraph(path.dirname(p.info.path))
-    }));
-    const graph = mergeGraphs(perProject.map((p) => p.graph));
-
-    // Surface vulnerable transitive packages the CLI pass may have missed.
-    for (const [key, advisories] of graph.vulnerabilities) {
-      if (merged.has(key) || advisories.length === 0) continue;
-      merged.set(key, {
-        id: graph.displayName.get(key) ?? key,
-        requestedVersion: "",
-        projects: [],
-        projectVersions: [],
-        transitive: true
-      });
-    }
-
-    for (const entry of merged.values()) {
-      const key = entry.id.toLowerCase();
-      applyGraphEdges(entry, key, graph);
-      const advisories = graph.vulnerabilities.get(key);
-      if (advisories?.length) this.applyAdvisories(entry, advisories);
-      // Per-project attribution so the details pane can point at the offender.
-      for (const { path: projectPath, graph: g } of perProject) {
-        if (g?.vulnerabilities.get(key)?.length) {
-          this.markVulnerableProject(entry, projectPath);
-          if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
+  /** Fold a `--outdated` pass: only `latestVersion` / `deprecated` are of interest. */
+  private foldOutdated(out: DotnetListOutput, byId: Map<string, InstalledPackage>): void {
+    for (const project of out.projects ?? []) {
+      for (const fw of project.frameworks ?? []) {
+        for (const pkg of fw.topLevelPackages ?? []) {
+          const entry = byId.get(pkg.id.toLowerCase());
+          if (!entry) continue;
+          if (pkg.latestVersion) entry.latestVersion = pkg.latestVersion;
+          if (pkg.deprecationReasons?.length) entry.deprecated = true;
         }
       }
     }
   }
 
+  private foldVulnerable(out: DotnetListOutput, byId: Map<string, InstalledPackage>): void {
+    for (const project of out.projects ?? []) {
+      const projectPath = this.projects.findByPath(project.path)?.info.path ?? path.normalize(project.path);
+      for (const fw of project.frameworks ?? []) {
+        const groups: (DotnetListPackage[] | undefined)[] = [fw.topLevelPackages, fw.transitivePackages];
+        for (const list of groups) {
+          for (const pkg of list ?? []) {
+            if (!pkg.vulnerabilities?.length) continue;
+            const entry = byId.get(pkg.id.toLowerCase());
+            if (!entry) continue;
+            this.applyAdvisories(entry, toAdvisories(pkg.vulnerabilities));
+            this.markVulnerableProject(entry, projectPath);
+            if (!entry.projects.includes(projectPath)) entry.projects.push(projectPath);
+          }
+        }
+      }
+    }
+  }
+
+  /* ---------------------------- shared helpers --------------------------- */
+
+  private resolveTargets(): string[] {
+    const projects = this.projects.getProjects();
+    const solutions = new Set<string>();
+    const looseProjects: string[] = [];
+    for (const p of projects) {
+      if (p.info.solution) solutions.add(p.info.solution);
+      else looseProjects.push(p.info.path);
+    }
+    return [...solutions, ...looseProjects];
+  }
+
+  private useDotnetListForEnumeration(): boolean {
+    return vscode.workspace
+      .getConfiguration("nuget")
+      .get<boolean>("useDotnetListForEnumeration", false);
+  }
+
+  private minimumPackageAgeDays(): number {
+    const raw = vscode.workspace.getConfiguration("nuget").get<number>("minimumPackageAgeDays", 7);
+    return Number.isFinite(raw) && raw > 0 ? raw : 0;
+  }
+
   /**
-   * Flag exact-version pins (`[x.y.z]`). The per-project pin state is read from
-   * the parsed project / props model rather than the CLI output so it is reliable
-   * regardless of whether `dotnet list` preserved the bracket syntax.
+   * Flag exact-version pins (`[x.y.z]`). Per-project pin state comes from the parsed
+   * project / props model, so it is reliable regardless of the enrichment path.
    */
   private markPinned(merged: Map<string, InstalledPackage>): void {
     for (const project of this.projects.getProjects()) {
@@ -296,8 +389,7 @@ export class InstalledService {
     const base = await this.firstFlatContainerBase();
     if (!base) return;
     for (const entry of packages) {
-      const raw = entry.resolvedVersion || entry.requestedVersion || "";
-      const version = raw.replace(/[[\]()]/g, "").split(",")[0].trim();
+      const version = cleanVersion(entry.resolvedVersion || entry.requestedVersion || "");
       if (version && /^\d/.test(version)) {
         entry.iconUrl = `${base}/${entry.id.toLowerCase()}/${version.toLowerCase()}/icon`;
       }
@@ -383,6 +475,11 @@ function toAdvisories(raw: { severity: string; advisoryurl: string }[]): Advisor
     severity: SEVERITY_WORDS[String(v.severity).toLowerCase()] ?? 0,
     advisoryUrl: v.advisoryurl
   }));
+}
+
+/** `[1.2.3]` / `(1.0,2.0)` / `1.2.3` → `1.2.3` (first concrete version token). */
+function cleanVersion(raw: string): string {
+  return raw.replace(/[[\]()]/g, "").split(",")[0].trim();
 }
 
 export function projectDisplayName(projectPath: string): string {

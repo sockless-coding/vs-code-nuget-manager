@@ -7,7 +7,8 @@ import type {
   PackageSummary,
   ProjectInfo
 } from "../panel/messaging";
-import { onHostEvent, onProgress, onScopeChange, request } from "./vscodeApi";
+import { onHostEvent, onInstalledEnriched, onProgress, onScopeChange, request } from "./vscodeApi";
+import { stripVersionPin } from "../nuget/versionRange";
 import { PackageList, buildInstalledTree, installedToRow, summaryToRow } from "./components/PackageList";
 import { PackageDetails } from "./components/PackageDetails";
 
@@ -30,10 +31,9 @@ export function App() {
   const [searching, setSearching] = React.useState(false);
 
   const [installed, setInstalled] = React.useState<InstalledPackage[]>([]);
-  const [updates, setUpdates] = React.useState<InstalledPackage[]>([]);
   const [includeTransitive, setIncludeTransitive] = React.useState(false);
   const [installedLoading, setInstalledLoading] = React.useState(false);
-  const [updatesLoading, setUpdatesLoading] = React.useState(false);
+  const [enriching, setEnriching] = React.useState(false);
   const [sdkAvailable, setSdkAvailable] = React.useState(true);
 
   const [selectedId, setSelectedId] = React.useState<string | undefined>();
@@ -65,19 +65,22 @@ export function App() {
       }
       if (event === "installedChanged") {
         refreshInstalled();
-        refreshUpdates();
       }
       if (event === "settingsChanged") {
         loadInitialState();
         refreshInstalled();
-        refreshUpdates();
       }
     });
     const offProgress = onProgress((message, done) => setProgress(done ? undefined : message));
+    const offEnriched = onInstalledEnriched((phase, packages) => {
+      setInstalled(packages);
+      if (phase === "updates" || phase === "done") setEnriching(false);
+    });
     const offScope = onScopeChange((paths) => setPreselectProjects(paths));
     return () => {
       offEvent();
       offProgress();
+      offEnriched();
       offScope();
     };
   }, []);
@@ -116,6 +119,7 @@ export function App() {
   /* --------------------------- installed / updates --------------------- */
   const refreshInstalled = React.useCallback(async () => {
     setInstalledLoading(true);
+    setEnriching(true);
     try {
       const r = await request({ kind: "listInstalled", includeTransitive });
       setInstalled(r.packages);
@@ -125,20 +129,21 @@ export function App() {
     }
   }, [includeTransitive]);
 
-  const refreshUpdates = React.useCallback(async () => {
-    setUpdatesLoading(true);
-    try {
-      const r = await request({ kind: "listUpdates" });
-      setUpdates(r.packages);
-    } finally {
-      setUpdatesLoading(false);
-    }
-  }, []);
-
   React.useEffect(() => {
     refreshInstalled();
-    refreshUpdates();
   }, [includeTransitive]);
+
+  /** The Updates tab is just the installed packages with a newer version available. */
+  const updates = React.useMemo(
+    () =>
+      installed.filter(
+        (p) =>
+          !p.transitive &&
+          p.latestVersion &&
+          p.latestVersion !== stripVersionPin(p.requestedVersion)
+      ),
+    [installed]
+  );
 
   /* ------------------------------- detail ------------------------------ */
   React.useEffect(() => {
@@ -176,7 +181,6 @@ export function App() {
         setToast(`${labelFor(action)} failed for ${failed.map((f) => f.project).join(", ")}: ${failed[0]?.message ?? ""}`);
       }
       await refreshInstalled();
-      await refreshUpdates();
     } catch (e: any) {
       setToast(String(e?.message ?? e));
     } finally {
@@ -216,7 +220,6 @@ export function App() {
         (notes.length > 0 ? ` — held back: ${notes.join(", ")}` : "")
     );
     await refreshInstalled();
-    await refreshUpdates();
   };
 
   const convertToCpm = async () => {
@@ -276,7 +279,7 @@ export function App() {
     tab === "browse"
       ? searching
       : tab === "updates"
-      ? updatesLoading
+      ? installedLoading || enriching
       : tab === "installed" || tab === "consolidate"
       ? installedLoading
       : false;
@@ -368,7 +371,7 @@ export function App() {
             rows={rows}
             selectedId={selectedId}
             loading={listLoading}
-            loadingMessage={tab === "browse" ? "Searching…" : "Enumerating packages…"}
+            loadingMessage={tab === "browse" ? "Searching…" : "Reading projects…"}
             tree={installedIsTree}
             emptyMessage={emptyMessageFor(tab, query)}
             onSelect={setSelectedId}

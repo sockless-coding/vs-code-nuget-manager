@@ -6,8 +6,11 @@
 import type {
   HostMessage,
   HostResponsePayload,
+  InstalledPackage,
   WebviewRequest
 } from "../panel/messaging";
+
+type EnrichPhase = "updates" | "vulnerabilities" | "done";
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -26,6 +29,7 @@ const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) 
 const eventListeners = new Set<(event: HostEventName) => void>();
 const progressListeners = new Set<(message: string, done: boolean) => void>();
 const scopeListeners = new Set<(preselectProjectPaths: string[]) => void>();
+const enrichedListeners = new Set<(phase: EnrichPhase, packages: InstalledPackage[]) => void>();
 
 window.addEventListener("message", (e: MessageEvent<HostMessage>) => {
   const msg = e.data;
@@ -43,6 +47,8 @@ window.addEventListener("message", (e: MessageEvent<HostMessage>) => {
   if (msg.type === "event") {
     if (msg.event === "progress") {
       progressListeners.forEach((l) => l(msg.message, msg.done));
+    } else if (msg.event === "installedEnriched") {
+      enrichedListeners.forEach((l) => l(msg.phase, msg.packages));
     } else if (msg.event === "scopeChanged") {
       scopeListeners.forEach((l) => l(msg.preselectProjectPaths));
     } else {
@@ -74,4 +80,11 @@ export function onProgress(listener: (message: string, done: boolean) => void): 
 export function onScopeChange(listener: (preselectProjectPaths: string[]) => void): () => void {
   scopeListeners.add(listener);
   return () => scopeListeners.delete(listener);
+}
+
+export function onInstalledEnriched(
+  listener: (phase: EnrichPhase, packages: InstalledPackage[]) => void
+): () => void {
+  enrichedListeners.add(listener);
+  return () => enrichedListeners.delete(listener);
 }

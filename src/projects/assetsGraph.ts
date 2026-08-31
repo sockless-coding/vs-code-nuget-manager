@@ -25,6 +25,8 @@ export interface DependencyGraph {
   dependents: Map<string, Set<string>>;
   /** idLower of packages referenced directly by a project. */
   topLevel: Set<string>;
+  /** idLower -> resolved version, taken from the restore `targets` section. */
+  resolved: Map<string, string>;
   /** idLower -> original casing seen in the assets file. */
   displayName: Map<string, string>;
   /** idLower -> advisories parsed from the audit logs. */
@@ -52,6 +54,7 @@ function emptyGraph(): DependencyGraph {
     dependencies: new Map(),
     dependents: new Map(),
     topLevel: new Set(),
+    resolved: new Map(),
     displayName: new Map(),
     vulnerabilities: new Map()
   };
@@ -85,10 +88,13 @@ export function buildGraph(assets: unknown): DependencyGraph {
   for (const target of Object.values(doc.targets ?? {})) {
     if (!target || typeof target !== "object") continue;
     for (const [key, entry] of Object.entries(target as Record<string, any>)) {
-      const parentId = key.split("/")[0];
+      const [parentId, parentVersion] = key.split("/");
       if (!parentId) continue;
       if (entry?.type && entry.type !== "package") continue;
       note(graph, parentId);
+      if (parentVersion && !graph.resolved.has(parentId.toLowerCase())) {
+        graph.resolved.set(parentId.toLowerCase(), parentVersion);
+      }
       for (const childId of Object.keys(entry?.dependencies ?? {})) {
         note(graph, childId);
         addEdge(graph, parentId, childId);
@@ -155,11 +161,28 @@ export function readAssetsGraph(projectDir: string): DependencyGraph | undefined
   }
 }
 
+/** Async variant, so a whole solution's assets files can be read in parallel. */
+export async function readAssetsGraphAsync(projectDir: string): Promise<DependencyGraph | undefined> {
+  const file = path.join(projectDir, "obj", "project.assets.json");
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  try {
+    return buildGraph(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
 export function mergeGraphs(graphs: (DependencyGraph | undefined)[]): DependencyGraph {
   const merged = emptyGraph();
   for (const g of graphs) {
     if (!g) continue;
     for (const [k, v] of g.displayName) if (!merged.displayName.has(k)) merged.displayName.set(k, v);
+    for (const [k, v] of g.resolved) if (!merged.resolved.has(k)) merged.resolved.set(k, v);
     for (const k of g.topLevel) merged.topLevel.add(k);
     for (const [k, set] of g.dependencies) {
       const into = merged.dependencies.get(k) ?? setInMap(merged.dependencies, k);

@@ -88,6 +88,26 @@ export class MetadataService {
     return dates;
   }
 
+  /**
+   * Known advisories for a specific installed version of a package, from the feed's
+   * registration metadata. `severity` is 0..3 (low..critical). Empty when the
+   * version has no listed vulnerabilities or the feed has no registration resource.
+   */
+  async vulnerabilitiesFor(
+    feedIndexUrl: string,
+    packageId: string,
+    version: string,
+    signal?: AbortSignal
+  ): Promise<{ severity: number; advisoryUrl: string }[]> {
+    const resources = await this.indexes.resolve(feedIndexUrl);
+    const catalog = await this.loadCatalog(resources.registrationsBaseUrl, packageId, signal);
+    const entry = catalog.get(version.toLowerCase());
+    return (entry?.vulnerabilities ?? []).map((v) => ({
+      severity: typeof v.severity === "string" ? Number(v.severity) || 0 : v.severity ?? 0,
+      advisoryUrl: v.advisoryUrl
+    }));
+  }
+
   /** All published versions, newest-first. */
   async listVersions(feedIndexUrl: string, packageId: string, signal?: AbortSignal): Promise<string[]> {
     const resources = await this.indexes.resolve(feedIndexUrl);
